@@ -281,15 +281,17 @@ Object.assign(SONGS, {
              bass: [45,57,45,57,45,57,45,57, 43,55,43,55,43,55,43,55, 41,53,41,53,41,53,41,53, 40,52,40,52,44,56,44,56] },
 });
 const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
-function playSong(name) { bgm.song = SONGS[name] || null; bgm.name = name; bgm.idx = 0; bgm.pending = null; if (AC) bgm.next = AC.currentTime + 0.08; }
+function playSong(name) { bgm.song = SONGS[name] || null; bgm.name = name; bgm.style = songStyle(name); bgm.idx = 0; bgm.pending = null; if (AC) bgm.next = AC.currentTime + 0.08; }
 function queueSong(name) { if (bgm.name !== name && bgm.pending !== name) bgm.pending = name; }   // 等到下一小節再換，不會突然斷掉
 function bgmTick() {
   if (!AC) return;
   if (!bgm.song || G.paused) { bgm.next = AC.currentTime + 0.05; return; }
   if (bgm.next < AC.currentTime - 0.2) bgm.next = AC.currentTime + 0.02;
   while (bgm.next < AC.currentTime + 0.25) {
-    if (bgm.pending && bgm.idx % 8 === 0) { const n = bgm.pending; bgm.pending = null; bgm.song = SONGS[n] || null; bgm.name = n; bgm.idx = 0; if (!bgm.song) return; }
+    if (bgm.pending && bgm.idx % 8 === 0) { const n = bgm.pending; bgm.pending = null; bgm.song = SONGS[n] || null; bgm.name = n; bgm.style = songStyle(n); bgm.idx = 0; if (!bgm.song) return; }
     const s = bgm.song;
+    if (s.soft) { golfMusicStep(s, bgm.idx, bgm.next); bgm.idx++; bgm.next += s.step; continue; }
+    if (bgm.style) { const st = styledStep(s, bgm.style, bgm.idx, bgm.next); bgm.idx++; bgm.next += st * (G.tempo || 1); continue; }
     const i = bgm.idx % s.mel.length;
     const m = s.mel[i], b = s.bass[i % s.bass.length];
     if (m) noteAt(mtof(m), s.step * 0.85, 'square', 0.035, bgm.next);
@@ -300,6 +302,125 @@ function bgmTick() {
   }
 }
 setInterval(bgmTick, 50);
+// ---------- 高爾夫：柔和的 Bossa Nova（電鋼琴＋和弦墊＋沙鈴＋木魚＋鳥叫） ----------
+const SOFT_GAIN = 0.3;                                          // 整體音量：跟其他歌差不多、偏小聲
+function softNote(f, d, type, v, t, o = {}) {                   // 慢起音＋低通濾波：聲音比較圓、比較暖
+  if (!AC || muted) return; v *= SOFT_GAIN * (softNote.mul || 1);
+  const osc = AC.createOscillator(), g = AC.createGain(), lp = AC.createBiquadFilter();
+  osc.type = type; osc.frequency.setValueAtTime(f, t);
+  if (o.vib) { const l = AC.createOscillator(), lg = AC.createGain(); l.frequency.value = 5; lg.gain.value = f * 0.004; l.connect(lg); lg.connect(osc.frequency); l.start(t + 0.12); l.stop(t + d + 0.3); }
+  lp.type = 'lowpass'; lp.frequency.setValueAtTime(o.cut || 1800, t); lp.Q.value = 0.3;
+  const a = o.att || 0.02, r = o.rel || d;
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v, t + a);
+  g.gain.setTargetAtTime(v * (o.sus != null ? o.sus : 0.55), t + a, d * 0.35); g.gain.setTargetAtTime(0.0001, t + d, r * 0.3);
+  osc.connect(lp); lp.connect(g); g.connect(master); osc.start(t); osc.stop(t + d + r + 0.1);
+}
+function softHit(t, kind) {                                       // 沙鈴、木魚、軟軟的大鼓
+  if (!AC || muted) return;
+  if (kind === 'kick') { softNote(62, 0.18, 'sine', 0.13, t, { att: 0.004, sus: 0.2, rel: 0.1, cut: 400 }); return; }
+  if (kind === 'wood') { softNote(1180, 0.05, 'triangle', 0.035, t, { att: 0.002, sus: 0.1, rel: 0.03, cut: 3000 }); softNote(780, 0.06, 'sine', 0.03, t, { att: 0.002, sus: 0.1, rel: 0.04, cut: 2000 }); return; }
+  if (!softHit.buf || softHit.ac !== AC) {                        // 沙鈴：事先做好一小段（已經包好音量包絡）
+    const n = Math.floor(AC.sampleRate * 0.08), bf = AC.createBuffer(1, n, AC.sampleRate), d = bf.getChannelData(0); let prev = 0;
+    for (let i = 0; i < n; i++) { const w = Math.random() * 2 - 1, x = i / AC.sampleRate, env = Math.min(1, x / 0.012) * Math.exp(-Math.max(0, x - 0.012) / 0.018); d[i] = (w - prev) * 0.5 * env; prev = w; }
+    softHit.buf = bf; softHit.ac = AC;
+  }
+  const s = AC.createBufferSource(), g = AC.createGain(); g.gain.value = (kind === 'shk2' ? 0.05 : 0.028) * SOFT_GAIN * (softNote.mul || 1);
+  s.buffer = softHit.buf; s.playbackRate.value = 0.92 + Math.random() * 0.16; s.connect(g); g.connect(master); s.start(t);
+}
+
+// ---------- 關卡音樂：每一關不同的樂器、鼓組、速度、調性 ----------
+const LEADS = {
+  ep:      { name: '電鋼琴', w: 'triangle', v: 0.16, cut: 2400, att: 0.01, sus: 0.42, oct: 0.035 },
+  marimba: { name: '木琴', w: 'sine', v: 0.24, cut: 3000, att: 0.003, sus: 0.08, short: 0.22, oct: 0.05 },
+  pluck:   { name: '撥弦', w: 'triangle', v: 0.2, cut: 1700, att: 0.004, sus: 0.15, short: 0.3 },
+  synth:   { name: '類比合成器', w: 'sawtooth', v: 0.075, cut: 1250, att: 0.02, sus: 0.5 },
+  chip:    { name: '8-bit', w: 'square', v: 0.07, cut: 2000, att: 0.006, sus: 0.45 },
+  flute:   { name: '長笛', w: 'sine', v: 0.2, cut: 2600, att: 0.045, sus: 0.7, vib: true },
+  brass:   { name: '銅管', w: 'sawtooth', v: 0.09, cut: 1900, att: 0.03, sus: 0.6 },
+  bell:    { name: '鐵琴', w: 'sine', v: 0.15, cut: 4000, att: 0.002, sus: 0.05, short: 0.5, oct: 0.08 },
+};
+const DRUMS = {                                                   // 每小節 8 拍：k＝大鼓、s＝小鼓、h＝鈸、r＝木魚
+  none:    {},
+  pop:     { k: [0, 4], s: [2, 6], h: [0, 1, 2, 3, 4, 5, 6, 7], hv: 0.6 },
+  shuffle: { k: [0, 3], s: [2, 6], h: [0, 2, 3, 4, 6, 7], swing: 0.18 },
+  tick:    { k: [0], r: [4], h: [1, 3, 5, 7] },
+  disco:   { k: [0, 2, 4, 6], s: [2, 6], h: [1, 3, 5, 7], hv: 1.4 },
+  bossa:   { k: [0, 4], r: [0, 3, 6], h: [0, 1, 2, 3, 4, 5, 6, 7], hv: 0.5, swing: 0.12 },
+  half:    { k: [0], s: [4], h: [0, 2, 4, 6] },
+  march:   { k: [0, 4], s: [2, 3, 6], h: [] },
+};
+const SONG_STYLE = {
+  title:  { lead: 'ep', drum: 'none', tempo: 1.05 },
+  office: { lead: 'ep', drum: 'pop', tempo: 1.3 },          // 原本太快：慢 30%
+  excel:  { lead: 'marimba', drum: 'shuffle', tempo: 1.22 },
+  audit:  { lead: 'synth', drum: 'tick', tempo: 1.18 },
+  party:  { lead: 'brass', drum: 'disco', tempo: 1.18 },
+  friday: { lead: 'flute', drum: 'bossa', tempo: 1.3 },
+  mengpo: { lead: 'flute', drum: 'none', tempo: 1 },
+  ending: { lead: 'ep', drum: 'half', tempo: 1.05 },
+};
+function dayMusic(n, D) {                                         // 每日關卡：同一首歌，每天不同編曲
+  const base = SONG_STYLE[THEME_SONG[D.theme]] || {}, r = mulberry(n * 7919 + 3), pk = a => a[Math.floor(r() * a.length)];
+  const night = ['night', 'moon', 'storm', 'rain', 'purple'].includes(D.sky), wet = ['rain', 'storm'].includes(D.wx);
+  if (n === 1) return Object.assign({}, base);
+  const st = { lead: n % 3 === 0 ? base.lead : pk(Object.keys(LEADS)), drum: n % 2 ? base.drum : pk(['pop', 'shuffle', 'tick', 'bossa', 'half', 'disco']),
+    tempo: (base.tempo || 1.2) * (wet ? 1.14 : night ? 1.08 : pk([0.94, 0.98, 1, 1.03, 1.06])), tr: pk([0, 0, 2, -2, 3, -3, 5, -5]), dark: night || wet };
+  if (D.boss) st.drum = 'march';
+  return st;
+}
+function softDrum(t, kind, v = 1) {
+  if (!AC || muted) return;
+  if (kind === 'k') { softNote(60, 0.2, 'sine', 0.42 * v, t, { att: 0.003, sus: 0.15, rel: 0.12, cut: 500 }); return; }
+  if (kind === 'r') { softHit(t, 'wood'); return; }
+  if (!softDrum.buf || softDrum.ac !== AC) { const n = Math.floor(AC.sampleRate * 0.18), bf = AC.createBuffer(1, n, AC.sampleRate), d = bf.getChannelData(0); let lp = 0;
+    for (let i = 0; i < n; i++) { const x = i / AC.sampleRate; lp += ((Math.random() * 2 - 1) - lp) * 0.45; d[i] = lp * Math.exp(-x / 0.05); } softDrum.buf = bf; softDrum.ac = AC; }
+  if (kind === 's') { const s = AC.createBufferSource(), g = AC.createGain(); g.gain.value = 0.11 * SOFT_GAIN * v * (softNote.mul || 1); s.buffer = softDrum.buf; s.connect(g); g.connect(master); s.start(t); softNote(190, 0.08, 'sine', 0.12 * v, t, { att: 0.002, sus: 0.1, rel: 0.05, cut: 800 }); return; }
+  if (kind === 'h') softHit(t, v > 1 ? 'shk2' : 'shk');
+}
+function styledStep(s, st, i, t) { softNote.mul = 0.36; try { return styledStep0(s, st, i, t); } finally { softNote.mul = 1; } }
+function styledStep0(s, st, i, t) {                               // 一拍：旋律＋貝斯＋鼓（柔和版）
+  const L = LEADS[st.lead] || LEADS.ep, D = DRUMS[st.drum] || DRUMS.none, step = s.step * (st.tempo || 1), k = i % 8, tr = st.tr || 0;
+  const sw = i % 2 ? step * (D.swing || st.swing || 0) : 0, tt = t + sw, n = s.mel.length, m = s.mel[i % n], b = s.bass[i % s.bass.length];
+  if (m) { let len = 1; while (len < 4 && !s.mel[(i + len) % n]) len++; const d = Math.min(len * step * 0.92, L.short || 9);
+    softNote(mtof(m + tr), d, L.w, L.v, tt, { att: L.att, sus: L.sus, rel: L.short ? 0.12 : 0.3, cut: L.cut * (st.dark ? 0.7 : 1), vib: L.vib && len > 2 });
+    if (L.oct) softNote(mtof(m + tr + 12), Math.min(d, 0.25), 'sine', L.oct, tt, { att: 0.004, sus: 0.1, rel: 0.1, cut: 4000 }); }
+  if (b) softNote(mtof(b + tr), step * 0.95, 'triangle', 0.3, tt, { att: 0.008, sus: 0.55, rel: 0.12, cut: 650 });
+  if (D.k && D.k.includes(k)) softDrum(t, 'k');
+  if (D.s && D.s.includes(k)) softDrum(tt, 's');
+  if (D.r && D.r.includes(k)) softDrum(tt, 'r');
+  if (D.h && D.h.includes(k)) softDrum(tt, 'h', (D.hv || 1) * (k % 2 ? 0.8 : 1.2));
+  return step;
+}
+function songStyle(name) { return (typeof LV !== 'undefined' && LV && LV.music && name === LV.song) ? LV.music : (SONG_STYLE[name] || null); }
+function birdTweet(t) {                                           // 遠方的小鳥
+  if (!AC || muted) return; const b = 2600 + Math.random() * 900, n = 2 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) { const tt = t + i * 0.11; const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(b, tt); o.frequency.exponentialRampToValueAtTime(b * 1.35, tt + 0.05); o.frequency.exponentialRampToValueAtTime(b * 0.95, tt + 0.08);
+    g.gain.setValueAtTime(0.0001, tt); g.gain.linearRampToValueAtTime(0.012 * SOFT_GAIN, tt + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, tt + 0.09); o.connect(g); g.connect(master); o.start(tt); o.stop(tt + 0.1); }
+}
+// 和弦：Fmaj7 Am7 Dm7 Gm7 C7 Fmaj7 B♭maj7 C7（每小節 8 拍）
+const GOLF_CH = [[41, [57, 60, 64, 69]], [45, [55, 60, 64, 67]], [38, [57, 60, 65, 69]], [43, [58, 62, 65, 70]], [36, [58, 64, 67, 70]], [41, [57, 60, 64, 69]], [46, [57, 62, 65, 69]], [36, [58, 64, 67, 70]]];
+SONGS.golf = { step: 0.2, soft: true, swing: 0.16,
+  mel: [76,0,0,74,72,0,0,0, 72,0,76,0,79,0,0,76, 77,0,0,76,74,0,72,0, 74,0,0,0,0,0,70,72,
+        70,0,0,72,74,0,76,0, 72,0,0,0,69,0,72,0, 74,0,77,0,81,0,79,77, 76,0,0,0,0,0,0,0,
+        81,0,0,79,77,0,76,0, 76,0,0,0,72,0,76,79, 81,0,79,0,77,0,74,0, 74,0,0,77,0,0,0,0,
+        76,0,74,0,72,0,70,0, 69,0,72,0,76,0,0,0, 74,0,0,72,70,0,69,0, 67,0,0,0,0,0,0,0], bass: [0] };
+SONGS.golfRain = Object.assign({}, SONGS.golf, { step: 0.24, rain: true });
+function golfMusicStep(s, i, t) {                                  // 一拍：旋律、和弦、貝斯、打擊
+  const bar = Math.floor(i / 8) % 8, k = i % 8, [root, ch] = GOLF_CH[bar], st = s.step;
+  const sw = i % 2 ? st * s.swing : 0, tt = t + sw;
+  const m = s.mel[i % s.mel.length];
+  if (m) { const len = (() => { let n = 1; while (n < 4 && !s.mel[(i + n) % s.mel.length]) n++; return n; })() * st;
+    softNote(mtof(m), len * 0.9, 'triangle', s.rain ? 0.05 : 0.06, tt, { att: 0.015, sus: 0.45, rel: 0.4, cut: s.rain ? 1400 : 2200, vib: len > st * 2 });
+    softNote(mtof(m + 12), len * 0.5, 'sine', 0.012, tt, { att: 0.01, sus: 0.2, rel: 0.2, cut: 3000 }); }   // 電鋼琴的泛音
+  if (k === 0) ch.forEach((n, j) => softNote(mtof(n), st * 7.6, 'sine', 0.018, tt + j * 0.012, { att: 0.25, sus: 0.8, rel: 0.6, cut: 1200 }));   // 和弦墊
+  if ([2, 5].includes(k)) ch.slice(1).forEach(n => softNote(mtof(n), st * 0.9, 'triangle', 0.012, tt, { att: 0.006, sus: 0.3, rel: 0.15, cut: 1600 }));   // 吉他刷弦（輕輕的）
+  const bn = k === 0 ? root : k === 3 || k === 4 ? root + 7 : k === 7 && bar % 2 ? root + 5 : 0;
+  if (bn) softNote(mtof(bn), st * (k === 0 ? 2.6 : 1.1), 'sine', 0.11, tt, { att: 0.01, sus: 0.5, rel: 0.2, cut: 600 });
+  if (!s.rain || k % 2 === 0) softHit(tt, k % 2 ? 'shk' : 'shk2');
+  if (k === 0 || k === 4) softHit(t, 'kick');
+  if ([0, 3, 6].includes(i % 16) || [10, 12].includes(i % 16)) softHit(tt, 'wood');
+  if (k === 0 && Math.random() < 0.18 && !s.rain) birdTweet(t + st * (2 + Math.random() * 4));
+}
 
 // ---------- 輸入：鍵盤 + 觸控 ----------
 const keys = { left: false, right: false, jump: false, down: false };
@@ -314,7 +435,7 @@ window.addEventListener('keydown', e => {
   if (G.state === 'shop') { shopKey(e); return; }
   if (G.state === 'calendar') { calKey(e); return; }
   if (G.state === 'mengpo') { mengpoKey(e); return; }
-  if (G.state === 'golf') { if (e.code === 'Escape') { G.golf = null; goTitle(); } else if (['Space', 'Enter', 'ArrowUp', 'KeyZ', 'KeyK', 'KeyW'].includes(e.code)) { e.preventDefault(); if (!e.repeat) golfPress(); } else if (e.code === 'KeyM') toggleMute(); return; }
+  if (G.state === 'golf') { if (e.code === 'Escape') golfExit(); else if (G.golf && G.golf.td && ['ArrowLeft', 'KeyA', 'KeyQ', 'ArrowRight', 'KeyD', 'KeyE'].includes(e.code)) { e.preventDefault(); golfTdTurn(['ArrowLeft', 'KeyA', 'KeyQ'].includes(e.code) ? (e.shiftKey ? -2 : -0.5) : (e.shiftKey ? 2 : 0.5)); } else if (/^Digit[1-6]$/.test(e.code)) golfSpinSel(+e.code.slice(5) - 1); else if (['KeyQ', 'ArrowLeft'].includes(e.code)) { e.preventDefault(); golfSpinCycle(-1); } else if (['KeyE', 'ArrowRight'].includes(e.code)) { e.preventDefault(); golfSpinCycle(1); } else if (['Space', 'Enter', 'ArrowUp', 'KeyZ', 'KeyK', 'KeyW'].includes(e.code)) { e.preventDefault(); if (!e.repeat) golfPress(); } else if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'skins') { skinKey(e); return; }
   if (G.state === 'cards') { if (['Escape', 'Enter', 'Space'].includes(e.code)) { e.preventDefault(); goTitle(); } return; }
   if (G.state === 'play' && !G.paused && (G.stage || G.bsod) && !['KeyM', 'KeyP', 'Escape'].includes(e.code)) {
@@ -4682,7 +4803,7 @@ function render() {
 const META_KEY = 'grapeOfficeMeta_v1';
 let META = loadMeta();
 function loadMeta() {
-  const d = { v: 1, days: {}, log: [], bank: 0, cards: [], skins: ['none'], skin: 'none', dev: false };
+  const d = { v: 1, days: {}, log: [], bank: 0, cards: [], skins: ['none'], skin: 'none', dev: false, golfDays: {}, golfFF: false };
   try { const m = JSON.parse(localStorage.getItem(META_KEY) || 'null'); if (m && m.v === 1) return Object.assign(d, m); } catch (_) {}
   return d;
 }
@@ -4775,7 +4896,7 @@ function genDay(n) {
   const nRooms = CH.filter(c => c === 'secret' || c === 'doors').length;
   const main = kinds.reduce((s, k) => s + CHUNK_W[k], 0);
   const def = {
-    name: `Day ${n}｜${D.name}`, daily: n, theme: D.theme, song: THEME_SONG[D.theme], spawn: 2, clock: 540, deadline: 1080,
+    name: `Day ${n}｜${D.name}`, daily: n, theme: D.theme, song: THEME_SONG[D.theme], music: dayMusic(n, D), spawn: 2, clock: 540, deadline: 1080,
     par: Math.round(main * 0.75) + (D.boss ? 45 : 0), w: main + nRooms * CHUNK_W.room,
     mission: D.msg.replace(/^\S+\s/, ''), hint: '每一關都藏著一個隱藏箱；踩扁 5 隻怪集滿「工會」，大哥會來幫你',
     manual: ['📅 每天打卡一關；蓋滿 30 格出勤卡＝全勤', '🔍 每一關都有一個隱藏箱，頂出來會出現一扇門', '🎋 今日運勢會改變今天的規則'],
@@ -4961,6 +5082,7 @@ const CARDS = [
   ['yama', '👹', '閻羅王', '地府人資長', 'KPI 審核', '「怨氣太重，加倍奉還！」'],
   ['mengpo', '🥣', '孟婆', '奈何橋店長（顏值擔當）', '讓你忘記加班', '「別盯著我看，湯要涼了」'],
   ['caddie', '🏌️', '桿弟', '高爾夫球場桿弟', '喊「好球！」', '「老闆好球！！（球在哪？）」'],
+  ['weather', '🌦️', '氣象主播', '球場氣象特派員', '預報永遠不準', '「午後有雷陣雨（老闆說不算）」'],
   ['grape', '🍇', '阿葡（你）', '資深社畜', '準時下班（偶爾）', '「我只想下班」'],
 ];
 function getCard(id) {
@@ -5673,54 +5795,77 @@ function drawYama(x, y, s) {                               // 原點在腳底
 //   ⛳ 週末陪老闆打高爾夫：重點不是贏，是「讓桿」
 // =========================================================
 const GOLF_HOLES = [
-  { name: '第一洞：試探老闆', par: 3, tee: 150, hole: 790, pts: [[0, 430], [200, 430], [420, 418], [520, 424], [600, 414], [960, 414]], sand: [470, 565], green: [700, 880] },
-  { name: '第二洞：水池陷阱', par: 3, tee: 150, hole: 840, pts: [[0, 440], [330, 440], [355, 474], [585, 474], [610, 420], [960, 420]], water: [355, 585, 452], green: [760, 920] },
-  { name: '第三洞：老闆的私人果嶺', par: 4, tee: 150, hole: 760, pts: [[0, 432], [240, 432], [370, 336], [470, 336], [560, 420], [960, 420]], tree: [310, 330, 46], green: [680, 850] },
+  { name: '第一洞：試探老闆', par: 3, tee: 150, hole: 790, pts: [[0, 430], [200, 430], [420, 418], [520, 424], [600, 414], [960, 414]], sand: [470, 565], green: [700, 880], gc: [[745, 6, 30], [860, -4, 35]], stimp: 'mid', gl: { t: 0.012, b: [[820, -25, 1.5, 30]] } },
+  { name: '第二洞：水池陷阱', par: 3, tee: 150, hole: 840, pts: [[0, 440], [330, 440], [355, 474], [585, 474], [610, 420], [960, 420]], water: [355, 585, 452], green: [760, 920], gc: [[795, -3, 30], [885, 3, 30]], stimp: 'fast', gl: { t: -0.016, b: [] } },
+  { name: '第三洞：老闆的私人果嶺', par: 4, tee: 150, hole: 760, pts: [[0, 432], [240, 432], [370, 336], [470, 336], [560, 420], [960, 420]], tree: [310, 330, 46], green: [680, 850], gc: [[700, 6, 40]], stimp: 'fast', gl: { t: 0.02, b: [[740, 30, 2, 35]] } },
+  { name: '第四洞：KPI 一路往上', par: 4, len: 2560, tee: 150, hole: 2300, pts: [[0, 440], [350, 440], [600, 425], [900, 410], [1100, 404], [1300, 404], [1400, 396], [1550, 384], [1620, 376], [1700, 352], [1820, 350], [1900, 362], [2000, 370], [2560, 370]], sand: [1150, 1270], tree: [1560, 334, 40], green: [2200, 2400], gc: [[2300, 5, 45]], stimp: 'slow', gl: { t: -0.01, b: [[2280, -20, 1.5, 35]] } },
+  { name: '第五洞：年終獎金那麼遠', par: 5, len: 3700, tee: 150, hole: 3400, pts: [[0, 430], [400, 430], [700, 412], [1000, 420], [1300, 428], [1690, 428], [1720, 476], [1900, 476], [1925, 424], [2200, 418], [2500, 404], [2800, 392], [3100, 388], [3200, 380], [3700, 380]], water: [1720, 1900, 452], sand: [2950, 3080], green: [3290, 3500], gc: [[3350, -4, 35], [3455, 4, 35]], stimp: 'mid', gl: { t: 0.015, b: [[3420, 25, -1.5, 30]] } },
 ];
 const GOLF_BOSS_TALK = ['慢慢打～我們等你', '年輕人力氣大喔', '這洞很難，你不用太勉強', '你知道我上次打幾桿嗎？', '（老闆偷偷把球踢回球道）', '風很大喔，打不好很正常'];
 const GOLF_CADDIE = ['老闆好球！！', '好球！！（球在哪？）', '老闆今天手感很好！', '這是戰術性下水！'];
-function golfGround(H0, x) { const p = H0.pts; for (let i = 1; i < p.length; i++) if (x <= p[i][0]) { const [x0, y0] = p[i - 1], [x1, y1] = p[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0); } return p[p.length - 1][1]; }
-function openGolf() {
+function golfGroundBase(H0, x) { const p = H0.pts; for (let i = 1; i < p.length; i++) if (x <= p[i][0]) { const [x0, y0] = p[i - 1], [x1, y1] = p[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0); } return p[p.length - 1][1]; }
+function golfGround(H0, x) { return H0.gc ? golfGroundBase(H0, x) - golfElev(H0, x) : golfGroundBase(H0, x); }
+function openGolf(opt) {
+  opt = opt && opt.course ? opt : {};
   initAudio();
-  G.golf = { hole: 0, me: [], boss: [], claim: [], hio: false, talkT: 0, talk: '' };
-  golfStartHole(); G.state = 'golf'; G.stateT = 0; playSong('friday'); getCard('caddie');
+  G.golf = { hole: 0, me: [], boss: [], claim: [], hio: false, talkT: 0, talk: '', course: opt.course || null, daily: opt.daily || 0 };
+  golfSetWeather(G.golf);
+  golfStartHole(); G.state = 'golf'; G.stateT = 0; playSong(golfWet(G.golf) ? 'golfRain' : 'golf'); getCard('caddie');
 }
 function golfStartHole() {
-  const g = G.golf, H0 = GOLF_HOLES[g.hole];
+  const g = G.golf, H0 = GH()[g.hole];
   g.ball = { x: H0.tee, y: golfGround(H0, H0.tee) - 5, vx: 0, vy: 0, rest: true };
   g.last = { x: g.ball.x, y: g.ball.y }; g.strokes = 0;
   g.wind = Math.round((Math.random() * 2 - 1) * 10) / 10;
   g.phase = 'boss'; g.t = 0; g.angle = 45; g.power = 0; g.msg = ''; g.swing = 0; g.parts = [];
-  // 老闆這洞要不要賴皮：隨機（大約四成），三洞都沒賴皮的話最後一洞機率提高
-  const cheated = (g.cheats || []).some(Boolean), last = g.hole === GOLF_HOLES.length - 1;
+  // 老闆這洞要不要賴皮：隨機（大約四成），前面都沒賴皮的話最後一洞機率提高
+  const cheated = (g.cheats || []).some(Boolean), last = g.hole === GH().length - 1;
   const cheat = Math.random() < (last && !cheated ? 0.75 : 0.4) ? pick(['under', 'kick', 'mull']) : null;
   g.bp = { ball: { x: H0.tee, y: golfGround(H0, H0.tee) - 5, vx: 0, vy: 0, rest: true }, last: null, state: 'aim', t: 0, real: 0, claim: 0, cheat, used: false, label: '', note: '' };
+  g.trp = []; g.trb = []; golfFxInit(g); g.cv = golfView(g, H0); g.cam = g.cv.x - W / 2;
+  g.wx = (g.wxs && g.wxs[g.hole]) || null; if (G.state === 'golf') queueSong(golfWet(g) ? 'golfRain' : 'golf');   // 下雨換慢一點、悶一點的版本 g.bald = false; g.wig = null; g.wigDone = false; g.wigOnCaddie = false; g.td = null; g.pv = 0; g.adv = null; g.shots = []; g.rpDone = false; g.rp = null; g.stormHit = false; g.st = null;
+  if (g.wx === 'wind') g.wind = Math.round((Math.random() < 0.5 ? -1 : 1) * (1.4 + Math.random() * 0.5) * 10) / 10;
+  if (g.wx && !(g.stormed && g.wx === 'rain')) { getCard('weather'); golfPop(g, GOLF_WX[g.wx].intro, W / 2, 196, { size: 24, screen: true, life: 170 }); golfPop(g, GOLF_WX[g.wx].sub, W / 2, 232, { size: 15, screen: true, life: 170 }); }
+  if (H0.desc && !g.stormed) golfPop(g, '📅 ' + H0.desc, W / 2, 160, { size: 16, screen: true, life: 200 });
 }
 // ---------- 球的物理（玩家、老闆共用） ----------
-function golfNoTree(H0, b) { return !!H0.tree && Math.hypot(b.x - H0.tree[0], b.y - H0.tree[1]) < H0.tree[2] + 40; }   // 球就在樹下：這桿不會打到樹
-function golfVel(angle, power, putt, dir) { const a = (putt ? 0 : angle) * Math.PI / 180, v = putt ? 0.6 + power / 100 * 7.4 : 2 + power / 100 * 16; return [Math.cos(a) * v * dir, -Math.sin(a) * v]; }
+function golfNoTree(H0, b) { return golfTrees(H0).some(t => Math.hypot(b.x - t[0], b.y - t[1]) < t[2] + 40); }   // 球就在樹下：這桿不會打到樹
+function golfVel(angle, power, putt, dir, spin) { const a = (putt ? 0 : angle) * Math.PI / 180, v = putt ? 0.6 + power / 100 * 7.4 : 2 + power / 100 * 16; return golfSpinVel([Math.cos(a) * v * dir, -Math.sin(a) * v], putt ? null : spin); }
 function golfOnGreen(H0, x) { return x > H0.green[0] && x < H0.green[1]; }
 function golfPhys(b, H0, wind) {                            // 走一個子步，回傳事件
-  b.vy += 0.125; b.vx += wind * 0.004; b.x += b.vx / 2; b.y += b.vy / 2;
+  const sp = b.spin, air = !b.land;                          // 特殊球路：飛行中
+  b.vy += 0.125 + (air ? (sp === 'top' ? 0.025 : sp === 'back' ? -0.012 : 0) : 0); b.vx += wind * 0.004 * (sp === 'stinger' && air ? 0.3 : 1); b.x += b.vx / 2; b.y += b.vy / 2;
   let ev = null;
-  if (H0.tree && !b.noTree) { const [tx, ty, tr] = H0.tree; if (Math.hypot(b.x - tx, b.y - ty) < tr) { b.vx = -b.vx * 0.4; b.vy = Math.abs(b.vy) * 0.2; b.x += b.vx * 2; ev = 'tree'; } }
-  if (H0.water && b.x > H0.water[0] && b.x < H0.water[1] && b.y >= H0.water[2]) return 'water';
-  if (b.x < 0 || b.x > W) return 'oob';
+  if (!b.noTree) { const TR = golfTrees(H0); for (let i = 0; i < TR.length; i++) { const [tx, ty, tr] = TR[i]; if (Math.hypot(b.x - tx, b.y - ty) < tr) { b.vx = -b.vx * 0.4; b.vy = Math.abs(b.vy) * 0.2; b.x += b.vx * 2; ev = 'tree'; break; } } }
+  if (H0.water && b.x > H0.water[0] && b.x < H0.water[1] && b.y >= H0.water[2]) {
+    if (sp === 'skim' && (b.skips || 0) < 3 && Math.abs(b.vx) > 3 && b.vy < Math.abs(b.vx) * 0.75) { b.skips = (b.skips || 0) + 1; b.y = H0.water[2] - 1; b.vy = -Math.abs(b.vy) * 0.55 - 0.6; b.vx *= 0.82; return 'skip'; }   // 打水漂
+    return 'water';
+  }
+  if (b.x < 0 || b.x > golfLen(H0)) return 'oob';
   const gy = golfGround(H0, b.x) - 5;
   if (b.y >= gy) {
     b.y = gy;
-    if (H0.sand && b.x > H0.sand[0] && b.x < H0.sand[1]) { b.vx = 0; b.vy = 0; }
-    else if (Math.abs(b.vy) > 1.2) { b.vy = -b.vy * 0.35; b.vx *= 0.75; }
-    else { b.vy = 0; b.vx *= golfOnGreen(H0, b.x) ? 0.985 : 0.95; const p0 = golfGround(H0, b.x - 2), p1 = golfGround(H0, b.x + 2); b.vx += (p1 - p0) * 0.02; }
-    if (Math.abs(b.x - H0.hole) < 7 && Math.abs(b.vx) < 2.6 && Math.abs(b.vy) < 2) { b.x = H0.hole; b.rest = true; return 'holed'; }
-    if (Math.abs(b.vx) < 0.08 && b.vy === 0) { b.vx = 0; b.rest = true; return 'rest'; }
+    const wet = golfWet(G.golf), first = !b.land; b.land = true;   // 下雨：彈不高、滾不遠
+    if (golfInSand(H0, b.x)) { if (b.vy > 0.6) ev = 'sand'; b.vx = 0; b.vy = 0; }
+    else if (Math.abs(b.vy) > 1.2) {
+      b.sl = 0; let kx = wet ? 0.62 : 0.75, ky = wet ? 0.25 : 0.35; ev = 'bounce';
+      if (first && sp === 'back') { kx = -0.36; ky = 0.1; ev = 'spinback'; }     // 逆旋：往回滾
+      else if (first && sp === 'top') { kx = 0.97; ev = 'spintop'; }               // 上旋：往前衝
+      else if (first && sp === 'flop') { kx = 0.22; ky = 0.15; ev = 'flop'; }       // 高吊：軟著陸
+      b.vy = -b.vy * ky; b.vx *= kx;
+    }
+    else { b.vy = 0; if (first && sp === 'back') { b.vx = -b.vx * 0.45; ev = 'spinback'; }
+      const onG = golfOnGreen(H0, b.x);                     // 果嶺：看果嶺速度；坡度影響比較大
+      b.vx *= sp === 'back' ? 0.955 : onG ? (H0._fr || golfGreenFr(H0, wet)) : (sp === 'top' || sp === 'stinger' ? (wet ? 0.92 : 0.968) : (wet ? 0.9 : 0.95)); const p0 = golfGround(H0, b.x - 2), p1 = golfGround(H0, b.x + 2); b.sl = onG ? (p1 - p0) * 0.028 : 0; b.vx += onG ? b.sl : (p1 - p0) * 0.02; }
+    if (Math.abs(b.x - H0.hole) < 7 && Math.abs(b.vx) < (b.vy === 0 && golfOnGreen(H0, b.x) ? 1.0 : 2.6) && Math.abs(b.vy) < 2) { b.x = H0.hole; b.rest = true; return 'holed'; }   // 推桿太大力會滑過洞口
+    if (Math.abs(b.vx) < 0.08 && b.vy === 0 && Math.abs(b.sl || 0) < 0.007) { b.vx = 0; b.rest = true; return 'rest'; }   // 果嶺斜坡上停不住，會往下滾
   }
   return ev;
 }
 function golfTry(b0, H0, wind, a, p, putt, dir) {
   const b = { x: b0.x, y: b0.y, rest: false, noTree: golfNoTree(H0, b0) }; [b.vx, b.vy] = golfVel(a, p, putt, dir);
   let ev = null, n = 0; while (n++ < 4000 && !['water', 'oob', 'holed', 'rest'].includes(ev)) ev = golfPhys(b, H0, wind);
-  return ev === 'holed' ? -1 : ev === 'water' || ev === 'oob' ? 900 : Math.abs(b.x - H0.hole);
+  return ev === 'holed' ? -1 : ev === 'water' || ev === 'oob' ? Math.abs(b0.x - H0.hole) + 900 : Math.abs(b.x - H0.hole);
 }
 function golfAI(b0, H0, wind, k, first) {                   // 老闆的球技：普通偏爛（會下水、會推過頭）
   const dir = b0.x > H0.hole ? -1 : 1, putt = golfOnGreen(H0, b0.x);
@@ -5739,20 +5884,33 @@ function golfAI(b0, H0, wind, k, first) {                   // 老闆的球技�
 }
 // ---------- 老闆打球（真的一桿一桿打，偶爾賴皮） ----------
 function golfBossStep() {
-  const g = G.golf, H0 = GOLF_HOLES[g.hole], B = g.bp; B.t++;
+  const g = G.golf, H0 = GH()[g.hole], B = g.bp; B.t++;
+  if (B.state === 'aim' && B.t === 1 && g.wx === 'wind' && !g.wigDone && Math.random() < 0.7) {   // 颱風：老闆的「帽子」飛走（鏡頭特寫）
+    g.wigDone = true; B.state = 'wig'; B.t = 0; B.note = '🌀 一陣狂風——'; return;
+  }
+  if (B.state === 'wig') { golfWigStep(g, H0, B); return; }
+  if (B.state === 'aim' && B.t === 1 && !B.whiffed && Math.random() < 0.18) {      // 隨機搞笑：老闆揮空／手機響
+    B.whiffed = true; B.state = 'whiff'; B.t = 0; B.note = pick(['💨 老闆揮空了…「這是練習揮桿」', '📱 老闆的手機響了：「喂？我在打…開會。」', '😤 老闆：「誰在講話？害我分心！」（沒人講話）', '🧘 老闆在做揮桿前的冥想…（三分鐘）']); return;
+  }
+  if (B.state === 'whiff') { if (B.t === 8) noise(0.3, 0.1); if (B.t > 70) { B.state = 'aim'; B.t = 2; } return; }
   if (B.state === 'aim' && B.t > 24) {
-    const s = golfAI(B.ball, H0, g.wind, 4, B.real === 0);
-    B.last = { x: B.ball.x, y: B.ball.y }; B.ball.noTree = golfNoTree(H0, B.ball); [B.ball.vx, B.ball.vy] = golfVel(s.a, s.p, s.putt, s.dir); B.ball.rest = false;
-    B.real++; B.claim++; B.state = 'fly'; B.t = 0; B.label = `老闆第 ${B.real} 桿`; SFX.stomp(1);
+    const far = Math.abs(B.ball.x - H0.hole) > 700, s = golfAI(B.ball, H0, g.wind, 4, B.real === 0);
+    if (far) { s.a = clamp(s.a + rand(-6, 6), 15, 75); s.p = clamp(s.p * rand(0.86, 1.12), 5, 100); }   // 長洞：老闆的大力揮桿不太準
+    const bsp = !s.putt && far && Math.random() < 0.15 ? pick(['back', 'top', 'flop', 'stinger']) : null;   // 老闆偶爾也秀一下（通常會打歪）
+    B.last = { x: B.ball.x, y: B.ball.y }; B.ball.noTree = golfNoTree(H0, B.ball); [B.ball.vx, B.ball.vy] = golfVel(s.a, s.p, s.putt, s.dir, bsp); B.ball.rest = false; B.ball.spin = bsp; B.ball.land = false; B.ball.skips = 0;
+    if (bsp) B.note = `😎 老闆：「看我的${golfSpinInfo(bsp).name}球！」`;
+    B.real++; B.claim++; B.state = 'fly'; B.t = 0; B.label = `老闆第 ${B.real} 桿`; SFX.stomp(1); golfOnStrike(g, s.putt, s.p, true);
     if (Math.random() < 0.5) { g.caddie = pick(GOLF_CADDIE); g.caddieT = 70; chatter('caddie', 4); }
     return;
   }
   if (B.state === 'fly') {
-    for (let s = 0; s < 4; s++) {
+    if (g.fx && g.fx.hit > 0) { g.fx.hit--; return; }
+    for (let s = 0, ns = META.golfFF && B.ball.land ? 40 : 4; s < ns; s++) {
       const ev = golfPhys(B.ball, H0, g.wind);
+      if (ev && ev !== 'rest') golfLandFx(g, ev, B.ball, H0, true);
       if (ev === 'tree') { SFX.bump(); B.note = '🌳 打到樹…差點打到老闆自己'; }
       if (ev === 'water' || ev === 'oob') {
-        if (ev === 'water') { SFX.splash(); for (let i = 0; i < 12; i++) g.parts.push({ x: B.ball.x, y: H0.water[2], vx: rand(-2, 2), vy: rand(-5, -2), life: 40, c: '#81d4fa' }); }
+        if (ev === 'water') SFX.splash();
         B.real++;                                                              // 罰一桿
         if (B.cheat === 'mull' && !B.used) { B.used = true; B.claim--; B.note = ev === 'water' ? '老闆：「剛剛那顆下水的是練習揮桿，不算」' : '老闆：「剛剛那顆是鳥叼走的，不算」'; chatter('durian', 5); }
         else { B.claim++; B.note = ev === 'water' ? '💦 老闆的球下水了（罰一桿）' : '🚫 老闆的球出界了（罰一桿）'; }
@@ -5760,6 +5918,7 @@ function golfBossStep() {
       }
       if (ev === 'holed') { SFX.ding(); B.state = 'holed'; B.t = 0; return; }
       if (ev === 'rest') {
+        if (golfOnGreen(H0, B.ball.x) && Math.abs(B.ball.x - H0.hole) < 24) { B.real++; B.claim++; B.ball.x = H0.hole; B.ball.y = golfGround(H0, H0.hole) - 5; B.note = pick(['老闆：「這球 OK 吧？」（自己說了算）', '老闆：「這種距離不用推啦」']); B.state = 'holed'; B.t = 0; SFX.ding(); return; }
         B.state = 'wait'; B.t = 0;
         if (B.cheat === 'kick' && !B.used && B.real >= 2 && !golfOnGreen(H0, B.ball.x)) { B.used = true; B.state = 'kick'; B.kick = { x0: B.ball.x, y0: B.ball.y, x1: H0.hole + (Math.random() < 0.5 ? -1 : 1) * rand(22, 46) }; B.real += 2; B.note = '🦶（老闆用腳把球「調整」到果嶺上…「這不算一桿啦」）'; chatter('durian', 5); }
         return;
@@ -5774,7 +5933,7 @@ function golfBossStep() {
     return;
   }
   if (B.state === 'wait' && B.t > 30) {
-    if (B.real >= 8) { B.note = '老闆：「撿起來，算我進了」'; B.state = 'holed'; B.t = 0; } else { B.state = 'aim'; B.t = 0; }
+    if (B.real >= Math.max(8, H0.par + 4)) { B.note = '老闆：「撿起來，算我進了」'; B.state = 'holed'; B.t = 0; } else { B.state = 'aim'; B.t = 0; }
     return;
   }
   if (B.state === 'holed' && B.t > 40) {
@@ -5784,22 +5943,32 @@ function golfBossStep() {
     B.state = 'summary'; B.t = 0; chatter('durian', 4);
   }
 }
-function golfBossSkip() { const g = G.golf; let n = 0; while (g.bp.state !== 'summary' && n++ < 20000) golfBossStep(); g.parts = []; }
+function golfBossSkip() { const g = G.golf; let n = 0; while (g.bp.state !== 'summary' && g.bp.state !== 'wig' && n++ < 20000) golfBossStep(); g.parts = []; if (g.fx) Object.assign(g.fx, { txt: [], hit: 0, shake: 0, flash: 0, focus: 0, slow: 0, gag: null, stats: null }); }
 function golfPress() {
   const g = G.golf; if (!g) return;
+  if (g.phase === 'boss' && g.bp.state === 'wig') { if (g.bp.t > 100) { g.bp.state = 'aim'; g.bp.t = 2; } return; }   // 名場面：前段不能跳過
   if (g.phase === 'boss') { if (g.bp.state !== 'summary') golfBossSkip(); else if (g.bp.t > 20) { g.phase = 'aim'; g.t = 0; } return; }
+  if (g.phase === 'replay') { golfReplayEnd(g); return; }
+  if (g.phase === 'storm') return;
+  if (g.phase === 'fly' && g.td) { if (g.td.n > 8 || g.td.roll || g.t > 8) golfTdSkip(g, GH()[g.hole]); return; }
+  if (g.phase === 'fly') { if (g.t > 8 && !(g.fx && g.fx.hit > 0)) golfFlySkip(g, GH()[g.hole]); return; }   // 不想看滾動：點一下略過
   if (g.phase === 'aim') { g.phase = 'power'; g.t = 0; SFX.coin(); return; }
   if (g.phase === 'power') { golfShoot(); return; }
-  if (g.phase === 'holed' && g.t > 40) { golfNext(); return; }
-  if (g.phase === 'done' && g.t > 60) { G.golf = null; goTitle(); }
+  if (g.phase === 'holed' && g.t > (golfHioNow(g) ? 165 : 40)) { golfNext(); return; }
+  if (g.phase === 'done' && g.t > 60) golfExit();
 }
-function golfDir() { const g = G.golf, H0 = GOLF_HOLES[g.hole]; return g.ball.x > H0.hole ? -1 : 1; }      // 打過頭就自動轉身往回打
-function golfPutt() { const g = G.golf, H0 = GOLF_HOLES[g.hole]; return golfOnGreen(H0, g.ball.x); }   // 在果嶺上＝推桿
+function golfDir() { const g = G.golf, H0 = GH()[g.hole]; return g.ball.x > H0.hole ? -1 : 1; }      // 打過頭就自動轉身往回打
+function golfPutt() { const g = G.golf, H0 = GH()[g.hole]; return !!g.td || golfOnGreen(H0, g.ball.x); }   // 在果嶺上＝推桿
 function golfShoot() {
+  if (G.golf.td) { golfTdShoot(G.golf, GH()[G.golf.hole]); return; }
   const g = G.golf, d = golfDir();
   g.last = { x: g.ball.x, y: g.ball.y }; g.dir = d;
-  g.ball.noTree = golfNoTree(GOLF_HOLES[g.hole], g.ball); [g.ball.vx, g.ball.vy] = golfVel(g.angle, g.power, golfPutt(), d); g.ball.rest = false;
-  g.strokes++; g.phase = 'fly'; g.t = 0; g.swing = 14; SFX.stomp(2); buzz(20);
+  const sp = golfPutt() ? null : (g.spin || null);
+  g.ball.noTree = golfNoTree(GH()[g.hole], g.ball); [g.ball.vx, g.ball.vy] = golfVel(g.angle, g.power, golfPutt(), d, sp); g.ball.rest = false; g.ball.spin = sp; g.ball.land = false; g.ball.skips = 0;
+  g.strokes++; g.phase = 'fly'; g.t = 0; g.swing = 14; g.ffT = 0; SFX.stomp(2); buzz(20);
+  golfOnStrike(g, golfOnGreen(GH()[g.hole], g.last.x), g.power, false);
+  if (sp) { const si = golfSpinInfo(sp); golfPop(g, `${si.icon} ${si.name}球！`, W / 2, 238, { size: 24, col: `rgb(${si.col})`, screen: true, life: 70 }); }
+  { const H0 = GH()[g.hole]; (g.shots = g.shots || []).push({ x: g.ball.x, y: g.ball.y, vx: g.ball.vx, vy: g.ball.vy, noTree: g.ball.noTree, spin: sp, skips: 0, back: false, flop: false, wind: g.wind, dir: d, putt: golfOnGreen(H0, g.last.x), power: g.power, from: Math.abs(g.ball.x - H0.hole), ev: null, tree: false, sand: false, gain: 0 }); }
 }
 function golfPenalty(text) {
   const g = G.golf; g.strokes++; g.msg = text; g.msgT = 120;
@@ -5807,7 +5976,7 @@ function golfPenalty(text) {
 }
 function golfNext() {
   const g = G.golf;
-  if (g.hole < GOLF_HOLES.length - 1) { g.hole++; golfStartHole(); }
+  if (g.hole < GH().length - 1) { g.hole++; golfStartHole(); }
   else golfFinish();
 }
 function golfFinish() {
@@ -5818,57 +5987,100 @@ function golfFinish() {
   else if (d < 0) { title = '😱 你贏了老闆…'; lines = [`你 ${me} 桿，老闆「${boss} 桿」`, '老闆：「年輕人球技不錯嘛…」（考績：待加強）', '桿弟：「你完蛋了」']; prize = 10; }
   else { title = '😅 打得有點慘'; lines = [`你 ${me} 桿，老闆「${boss} 桿」`, '老闆：「你是不是平常都沒在運動？」', '（至少老闆很開心）']; prize = 15; }
   const perfect = (d >= 0 && d <= 2) || g.hio;
+  let again = false;
+  if (g.daily) { const rec = META.golfDays[g.daily]; if (rec) { prize = 0; again = true; } META.golfDays[g.daily] = { best: Math.min(rec ? rec.best : 99, me), perfect: !!((rec && rec.perfect) || perfect) }; }
   META.bank += prize; let skin = '';
   if (perfect && !META.skins.includes('golf')) { META.skins.push('golf'); skin = '🎁 解鎖造型：🧢 高爾夫遮陽帽！'; }
   saveMeta();
-  g.result = { title, lines: [...lines, `🍇 葡萄 +${prize} 存進存摺${skin ? '　' + skin : ''}`] };
+  g.result = { title, lines: [...lines, again ? '（重打：葡萄只發第一次）' : `🍇 葡萄 +${prize} 存進存摺${skin ? '　' + skin : ''}`] };
   g.phase = 'done'; g.t = 0; perfect ? SFX.win() : SFX.clear();
 }
 function updateGolf() {
   const g = G.golf; if (!g) return;
-  const H0 = GOLF_HOLES[g.hole];
+  const H0 = GH()[g.hole];
   g.t++; if (g.swing > 0) g.swing--; if (g.msgT > 0) g.msgT--; if (g.caddieT > 0) g.caddieT--;
-  for (const p of g.parts) { p.x += p.vx; p.y += p.vy; p.vy += 0.25; p.life--; } g.parts = g.parts.filter(p => p.life > 0);
+  golfCamStep(g, H0);                                         // 追球鏡頭
+  golfUpdParts(g); golfFxStep(g, H0);
   if (--g.talkT <= 0 && (g.phase === 'aim' || g.phase === 'power')) { g.talk = pick(GOLF_BOSS_TALK); g.talkT = 260; chatter('durian', 4); }
   if (g.phase === 'boss') { golfBossStep(); if (g.bp.state === 'summary' && g.bp.t > 320) { g.phase = 'aim'; g.t = 0; } return; }
+  if (g.phase === 'replay') { golfReplayStep(g, H0); return; }
+  if (g.phase === 'storm') { golfStormStep(g); return; }
+  if (g.phase === 'holed' && !g.rpDone && g.t > (golfHioNow(g) ? 160 : 36) && golfReplayStart(g, H0)) return;   // 重播精華
   const tri = (t, per) => { const u = (t % per) / per; return u < 0.5 ? u * 2 : 2 - u * 2; };   // 等速來回（比較好抓時機）
-  if (g.phase === 'aim') g.angle = golfPutt() ? 0 : 13 + tri(g.t, 240) * 64;          // 角度：4 秒一個來回
-  if (g.phase === 'power') g.power = tri(g.t, 200) * 100;                             // 力道：約 3.3 秒一個來回
+  if (g.phase === 'aim') g.angle = golfPutt() ? 0 : 13 + tri(g.t, 240) * 64;
+  if (g.phase === 'aim' && !g.td && !g.noTD && golfOnGreen(H0, g.ball.x)) golfTdEnter(g, H0);       // 上果嶺：切換成俯瞰
+  if (g.phase === 'aim' && g.td) { if (!g.adv || g.adv.key !== g.td.u.toFixed(1) + ',' + g.td.v.toFixed(1)) golfTdRead(g, H0); }
+  else if (g.phase === 'aim' && golfPutt() && (!g.adv || g.adv.x !== g.ball.x)) golfReadGreen(g, H0);   // 桿弟讀線          // 角度：4 秒一個來回
+  if (g.phase === 'power') g.power = tri(g.t, golfPutt() ? 280 : 200) * 100;   // 推桿的力道條慢一點                             // 力道：約 3.3 秒一個來回
+  if (g.phase === 'fly' && g.td) { golfTdFly(g, H0); return; }
   if (g.phase === 'fly') {
     const b = g.ball;
-    for (let s = 0; s < 2; s++) {
-      const ev = golfPhys(b, H0, g.wind);
-      if (ev === 'tree') { SFX.bump(); g.msg = '🌳 打到樹了！'; g.msgT = 80; }
-      if (ev === 'water') {
-        SFX.splash(); for (let i = 0; i < 12; i++) g.parts.push({ x: b.x, y: H0.water[2], vx: rand(-2, 2), vy: rand(-5, -2), life: 40, c: '#81d4fa' });
-        golfPenalty('💦 下水了！罰一桿（桿弟：「戰術性下水！」）'); g.phase = 'aim'; g.t = 0; return;
-      }
-      if (ev === 'oob') { golfPenalty('🚫 出界！罰一桿'); g.phase = 'aim'; g.t = 0; return; }
-      if (ev === 'holed') {
-        g.me[g.hole] = g.strokes;
-        if (g.strokes === 1) { g.hio = true; SFX.win(); g.msg = '🏆 一桿進洞！！'; } else { SFX.ding(); g.msg = ''; }
-        g.phase = 'holed'; g.t = 0; return;
-      }
-      if (ev === 'rest') {
-        if (g.strokes >= 7) { g.me[g.hole] = 8; g.msg = '老闆：「好啦好啦，算你進了」'; g.msgT = 120; g.phase = 'holed'; g.t = 0; return; }
-        g.phase = 'aim'; g.t = 0; return;
-      }
-    }
+    if (g.fx && g.fx.hit > 0) { g.fx.hit--; return; }           // 擊球停格
+    for (let s = 0, ns = g.fx && g.fx.slow > 0 ? 1 : 2; s < ns; s++) if (golfFlySub(g, H0, false)) return;
+    if (META.golfFF && b.land && !b.rest && ++g.ffT > 14) golfFlySkip(g, H0);   // 設定：落地後自動略過滾動
   }
 }
+function golfFlySub(g, H0, quiet) {                          // 球走一個子步；回傳 true＝這一桿結束
+  if (g.td) return golfTdStep(g, H0, quiet);
+  const b = g.ball;
+  const ev = golfPhys(b, H0, g.wind);
+  if (!ev && golfRollOnGreen(g, H0, b)) { golfTdFromRoll(g, H0, b, quiet); return false; }   // 滾上果嶺：切換成俯瞰
+  const fin = ['water', 'oob', 'holed', 'rest'].includes(ev);
+  if (ev && ev !== 'rest' && (!quiet || fin)) golfLandFx(g, ev, b, H0, false);
+  { const sh = g.shots && g.shots[g.shots.length - 1];       // 記錄這一桿（給重播用）
+    if (sh && ev) { if (ev === 'tree') sh.tree = true; if (ev === 'sand') sh.sand = true; if (ev === 'skip') sh.skips++; if (ev === 'spinback') sh.back = true; if (ev === 'flop') sh.flop = true;
+      if (['water', 'oob', 'holed', 'rest'].includes(ev)) { sh.ev = ev; sh.end = b.x; sh.gain = ev === 'water' || ev === 'oob' ? -999 : sh.from - Math.abs(b.x - H0.hole); sh.endDist = Math.abs(b.x - H0.hole); sh.onGreen = ev === 'holed' || golfOnGreen(H0, b.x); } } }
+  if (ev === 'tree') { if (!quiet) SFX.bump(); g.msg = '🌳 打到樹了！'; g.msgT = 80; }
+  if (ev === 'water') {
+    SFX.splash();
+    golfPenalty('💦 下水了！罰一桿（桿弟：「戰術性下水！」）'); g.phase = 'aim'; g.t = 0; return true;
+  }
+  if (ev === 'oob') { golfPenalty('🚫 出界！罰一桿'); g.phase = 'aim'; g.t = 0; return true; }
+  if (ev === 'holed') {
+    g.me[g.hole] = g.strokes; golfAdvReact(g, H0, true);
+    if (g.strokes === 1) { g.hio = true; SFX.win(); g.msg = ''; g.fx.fw = 220; golfPop(g, '🏆 一桿進洞！！！', W / 2, 140, { size: 44, col: '#fff59d', burst: '#c62828', screen: true, life: 150 }); golfPop(g, pick(['桿弟當場昏倒', '老闆的下巴掉到果嶺上', '遠方的會館開始放鞭炮']), W / 2, 210, { size: 18, screen: true, life: 150 }); } else { SFX.ding(); g.msg = ''; }
+    if (g.wx === 'storm' && !g.stormHit) golfPop(g, '（雷陣雨下在隔壁球場…老闆有點失望）', W / 2, 250, { size: 15, screen: true, life: 120 });
+    g.phase = 'holed'; g.t = 0; return true;
+  }
+  if (ev === 'rest') {
+    if (golfOnGreen(H0, b.x) && Math.abs(b.x - H0.hole) < 11) {   // OK 球：離洞很近，算進（多一桿）
+      g.strokes++; g.me[g.hole] = g.strokes; SFX.ding(); golfAdvReact(g, H0, true);
+      golfPop(g, pick(['🤝 OK 球！（多算一桿）', '🤝 這球給你！（老闆難得大方）']), W / 2, 160, { size: 26, col: '#fff59d', screen: true, life: 90 }); g.phase = 'holed'; g.t = 0; return true;
+    }
+    golfAdvReact(g, H0, false);
+    if (g.strokes >= Math.max(7, H0.par + 4)) { g.me[g.hole] = g.strokes + 1; g.msg = '老闆：「好啦好啦，算你進了」'; g.msgT = 120; g.phase = 'holed'; g.t = 0; return true; }
+    if (g.wx === 'storm' && !g.stormHit && Math.random() < 0.65) { golfStorm(g); return true; }   // 午後雷陣雨
+    g.phase = 'aim'; g.t = 0; return true;
+  }
+  return false;
+}
+function golfRollOnGreen(g, H0, b) { return !g.noTD && b.land && !b.rest && b.vy === 0 && golfOnGreen(H0, b.x) && Math.abs(b.vx) > 0.15; }
+function golfTdFromRoll(g, H0, b, quiet) {                        // 果嶺上滾動中 → 俯瞰（加一點點左右的偏差）
+  const sh = g.shots && g.shots[g.shots.length - 1], from = sh ? sh.from : Math.abs(H0.hole - b.x);
+  const r = Math.sin((sh ? sh.power : 50) * 12.9898 + from * 0.78233 + g.strokes * 3.7) * 43758.5453, u = (r - Math.floor(r)) * 2 - 1;
+  const v0 = u * Math.min(14, from * 0.022);
+  g.td = { u: b.x, v: v0, vu: b.vx, vv: 0, aim: 0, trail: [[b.x, v0]], n: 0, lip: false, from, roll: true };
+  if (!quiet) { golfPop(g, '🔭 上果嶺了！', W / 2, 120, { size: 24, col: '#b9f6ca', screen: true, life: 70 }); g.ffFlash = 0; g.fx.flash = 0.35; tone(880, 0.08, 'sine', 0.05); tone(1320, 0.12, 'sine', 0.05, 0, 0.07); }
+}
+function golfFlySkip(g, H0) {                                 // 略過：直接算出結果（跟正常看完一模一樣）
+  if (g.phase !== 'fly') return;
+  if (g.fx) Object.assign(g.fx, { hit: 0, slow: 0, gag: null, fire: false, stats: null });
+  let n = 0; while (g.phase === 'fly' && n++ < 9000) if (golfFlySub(g, H0, true)) break;
+  g.trp = []; g.ffFlash = 16; tone(1200, 0.06, 'square', 0.05); tone(1600, 0.08, 'square', 0.05, 0, 0.05);
+  g.cv = golfView(g, H0); g.cam = g.cv.x - W / 2 / g.cv.z;
+}
 function drawScorecard(x, y, hi) {                         // 記分卡：你 vs 老闆（自稱）vs 老闆（實際）
-  const g = G.golf, cw = 74, rh = 26, cols = ['', '第 1 洞', '第 2 洞', '第 3 洞', '總計'];
-  const sum = a => a.reduce((s, v) => s + (v || 0), 0), cell = (a, i) => a[i] != null ? a[i] : '－';
-  const rows = [['標準桿', ...GOLF_HOLES.map(h => h.par), sum(GOLF_HOLES.map(h => h.par))],
-    ['🍇 你', cell(g.me, 0), cell(g.me, 1), cell(g.me, 2), sum(g.me)],
-    ['😈 老闆（自稱）', cell(g.claim, 0), cell(g.claim, 1), cell(g.claim, 2), sum(g.claim)],
-    ['👀 老闆（實際）', cell(g.boss, 0), cell(g.boss, 1), cell(g.boss, 2), sum(g.boss)]];
-  const w0 = 132, tw = w0 + cw * 4;
+  const g = G.golf, n = GH().length, cw = n > 3 ? 58 : 74, rh = 26, w0 = 132, tw = w0 + cw * (n + 1);
+  if (x == null) x = W / 2 - tw / 2;
+  const cols = ['', ...GH().map((h, i) => n > 3 ? `第${i + 1}洞` : `第 ${i + 1} 洞`), '總計'];
+  const sum = a => a.reduce((s, v) => s + (v || 0), 0), cell = (a, i) => a[i] != null ? a[i] : '－', all = a => GH().map((h, i) => cell(a, i));
+  const rows = [['標準桿', ...GH().map(h => h.par), sum(GH().map(h => h.par))],
+    ['🍇 你', ...all(g.me), sum(g.me)], ['😈 老闆（自稱）', ...all(g.claim), sum(g.claim)], ['👀 老闆（實際）', ...all(g.boss), sum(g.boss)]];
   ctx.fillStyle = '#f1f8e9'; rr(x, y, tw, rh * 5 + 6, 8); ctx.fill(); ctx.strokeStyle = '#2e7d32'; ctx.lineWidth = 2; ctx.stroke();
   if (hi != null) { ctx.fillStyle = 'rgba(255,213,79,.35)'; ctx.fillRect(x + w0 + hi * cw, y + 3, cw, rh * 5); }
   cols.forEach((c, i) => txt(c, i ? x + w0 + (i - 1) * cw + cw / 2 : x + 10, y + 19, 13, '#1b5e20', i ? 'center' : 'left'));
   rows.forEach((r, j) => r.forEach((v, i) => txt(String(v), i ? x + w0 + (i - 1) * cw + cw / 2 : x + 10, y + 19 + (j + 1) * rh, 13,
-    j === 2 ? '#c62828' : j === 3 ? '#6d4c41' : '#3e2723', i ? 'center' : 'left', { weight: i === 4 || j === 1 ? 'bold' : 'normal' })));
+    j === 2 ? '#c62828' : j === 3 ? '#6d4c41' : '#3e2723', i ? 'center' : 'left', { weight: i === n + 1 || j === 1 ? 'bold' : 'normal' })));
   ctx.strokeStyle = 'rgba(46,125,50,.3)'; ctx.lineWidth = 1; for (let j = 1; j < 5; j++) { ctx.beginPath(); ctx.moveTo(x + 6, y + 4 + j * rh); ctx.lineTo(x + tw - 6, y + 4 + j * rh); ctx.stroke(); }
   const d = sum(g.me) - sum(g.claim);
   return { d, me: sum(g.me), claim: sum(g.claim), real: sum(g.boss) };
@@ -5887,21 +6099,70 @@ function drawGolfer(x, y, s, swing, face = 1, putt = false) {   // 阿葡拿球�
   ctx.restore();
 }
 function drawGolf() {
-  const g = G.golf, H0 = GOLF_HOLES[g.hole];
-  drawGolfScene(g, H0); drawGolfFinish(g);
-  // 老闆＋桿弟（左邊）
-  const tg = golfGround(H0, 40);
-  if (g.phase !== 'boss' || g.bp.state === 'summary') drawGolfDurian(32, tg, 0.36, g.phase === 'done' && G.golf.result && /贏了/.test(G.golf.result.title) ? 'angry' : 'normal', false);
-  drawCaddie(80, golfGround(H0, 80));
-  // 老闆打球
+  if (G.golf.td && ['aim', 'power', 'fly'].includes(G.golf.phase)) { drawGolfTD(G.golf, GH()[G.golf.hole]); drawGolfHud(G.golf, GH()[G.golf.hole]); return; }   // 俯瞰果嶺
+  const g = G.golf, H0 = GH()[g.hole], len = golfLen(H0), cv = g.cv || golfView(g, H0), z = cv.z, cam = cv.x - W / 2 / z, fx = g.fx || {};
+  const shx = fx.shake > 0.3 ? rand(-fx.shake, fx.shake) : 0, shy = fx.shake > 0.3 ? rand(-fx.shake, fx.shake) * 0.7 : 0;
+  const toS = (x, y) => [(x - cv.x) * z + W / 2 + shx, (y - cv.y) * z + H * 0.45 + shy];
+  const putting = g.phase === 'aim' || g.phase === 'power', fdP = putting ? golfDir() : (g.dir || 1);
+  const angry = g.phase === 'done' && g.result && /贏了/.test(g.result.title) ? 'angry' : 'normal';
+  const bad = x => (H0.water && x > H0.water[0] - 40 && x < H0.water[1] + 40) || golfSands(H0).some(s => x > s[0] - 14 && x < s[1] + 14);
+  const okSpot = x => x > 8 && x < len - 8 && !bad(x);
+  const safe = (x, d) => { for (let i = 0; i < 40 && bad(x); i++) x -= 12 * d; return x; };   // 站位避開沙坑、水池（往後退）
+  ctx.save(); ctx.translate(shx, shy); drawGolfSky(g, H0, cam, (H * 0.45 - cv.y) * 0.3); ctx.restore();
+  ctx.save(); ctx.translate(W / 2 + shx, H * 0.45 + shy); ctx.scale(z, z); ctx.translate(-cv.x, -cv.y);   // 追球鏡頭（會放大）
+  drawGolfGround(g, H0, cam, W / z);
+  if (putting && golfPutt()) drawGreenRead(g, H0);
+  let durX = null, durGy = 0, cadX = null;
+  if (g.phase === 'boss' && g.bp.state !== 'summary') {          // 老闆打球：老闆站球旁，桿弟、阿葡在後面看
+    const B = g.bp, bb = B.ball, ax = B.state === 'kick' ? B.kick.x0 : (B.state === 'fly' && B.last) ? B.last.x : bb.x, bd = (B.state === 'fly' && B.last ? B.last.x : bb.x) > H0.hole ? -1 : 1;
+    const gx = ax - 118 * bd; if (okSpot(gx)) { drawGolfer(gx, golfGround(H0, gx), 1.2, 0, bd, false); if (golfWet(g)) drawRainCloud(gx, golfGround(H0, gx) - 60); }
+    cadX = safe(ax - 72 * bd, bd); if (okSpot(cadX)) { drawCaddie(cadX, golfGround(H0, cadX), bd); if (g.wigOnCaddie) drawWig({ x: cadX, y: golfGround(H0, cadX) - 50, rot: -0.12 * bd }); } else cadX = null;
+    durX = ax - 30 * bd; durGy = golfGround(H0, durX);
+    ctx.save(); ctx.translate(durX, durGy); ctx.scale(bd, 1); if (B.state === 'whiff') ctx.rotate(Math.sin(B.t * 0.35) * 0.35 * Math.max(0, 1 - B.t / 50)); ctx.translate(-durX, -durGy); drawGolfDurian(durX, durGy, 0.28, 'normal', true, g.bald); ctx.restore();
+    if (B.state === 'wig' && B.t > 26) { txt(B.t > 86 ? '💦' : '‼️', durX + 12 * bd, durGy - 62 + Math.sin(FC * 0.3) * 2, 11, '#fff', 'center'); if (B.t > 86 && FC % 30 < 18) txt('✨', durX - 6, durGy - 50, 8, '#fff', 'center'); }
+    if (golfWet(g)) drawUmbrella(durX, durGy - 76, cadX != null ? cadX - 21 * bd : durX + 30 * bd, golfGround(H0, cadX != null ? cadX : durX) - 28);
+    golfTrail(g, 'b', bb, '255,236,140'); golfBall(H0, bb.x, bb.y, true); drawSpinMarks(bb, bb.spin, bd);
+  } else {                                                      // 換你打：老闆、桿弟站你後面
+    const ax = putting || g.phase === 'boss' ? g.ball.x : g.last.x;
+    cadX = safe(ax - 70 * fdP, fdP); durX = safe(cadX - 48 * fdP, fdP); durGy = golfGround(H0, durX);
+    if (okSpot(durX)) drawGolfDurian(durX, durGy, 0.36, angry, false, g.bald); else durX = null;
+    if (okSpot(cadX)) { drawCaddie(cadX, golfGround(H0, cadX), fdP); if (g.wigOnCaddie) drawWig({ x: cadX, y: golfGround(H0, cadX) - 50, rot: -0.12 * fdP }); } else cadX = null;
+    if (golfWet(g) && durX != null) drawUmbrella(durX, durGy - 92, cadX != null ? cadX - 21 * fdP : durX + 30 * fdP, golfGround(H0, cadX != null ? cadX : durX) - 28);
+  }
+  const b = g.ball, by = golfGround(H0, b.x);
+  if (g.phase !== 'boss') {
+    if (putting) drawGolfer(b.x - 24 * fdP, by, 1.4, 0, fdP, golfPutt()); else drawGolfer(g.last.x - 24 * fdP, golfGround(H0, g.last.x), 1.4, g.swing, fdP, golfOnGreen(H0, g.last.x));
+    if (golfWet(g)) { const gx = putting ? b.x - 24 * fdP : g.last.x - 24 * fdP; drawRainCloud(gx, golfGround(H0, gx) - 84); }
+    golfTrail(g, 'p', b, golfSpinInfo(b.spin).col);
+    if (fx.fire && g.phase === 'fly') { const fg = ctx.createRadialGradient(b.x, b.y, 2, b.x, b.y, 18); fg.addColorStop(0, 'rgba(255,235,59,.9)'); fg.addColorStop(1, 'rgba(255,87,34,0)'); ctx.fillStyle = fg; circ(b.x, b.y, 18); ctx.fill(); }
+    if (g.phase !== 'holed' || Math.abs(b.x - H0.hole) > 3) { golfBall(H0, b.x, b.y, false); drawSpinMarks(b, b.spin, g.dir || 1); }
+  }
+  if (putting) {                                                // 瞄準線＋軌跡預覽（世界座標）
+    const a = g.angle * Math.PI / 180, fd = fdP, putt = golfPutt();
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x + Math.cos(a) * 90 * fd, b.y - Math.sin(a) * 90); ctx.stroke(); ctx.setLineDash([]);
+    if (!putt) txt(Math.round(g.angle) + '°', b.x + Math.cos(a) * 104 * fd, b.y - Math.sin(a) * 104 - (putt ? 14 : 0), 13, '#fff', 'center', { stroke: '#1b5e20', sw: 3 });
+    if (fd < 0 && !putt) txt('↩ 打過頭了，往回打', b.x, b.y - 70, 14, '#fff59d', 'center', { stroke: '#1b5e20', sw: 3 });
+    if (g.phase === 'power') { const pb = { x: b.x, y: b.y, rest: false, noTree: true, spin: putt ? null : g.spin }; [pb.vx, pb.vy] = golfVel(g.angle, g.power, putt, fd, pb.spin);
+      ctx.fillStyle = 'rgba(255,255,255,.75)'; for (let i = 0, n = putt ? 22 : 90; i < n; i++) { golfPhys(pb, H0, 0); if (i % 6 === 0) { circ(pb.x, pb.y, 2); ctx.fill(); } if (pb.rest) break; } }
+  }
+  drawGolfGagWorld(g, H0); if (g.wig) drawWig(g.wig); golfDrawParts(g);
+  ctx.restore();
+  drawGolfFinish(g);
+  drawGolfFxScreen(g, H0, toS);
+  if (g.phase === 'replay') drawGolfReplayUI(g);
+  // ---- 以下是畫面上的介面 ----
+  const sx = x => toS(x, 0)[0];
+  if (len > W) drawGolfMap(g, H0, cam, W / z);
+  if (sx(H0.hole) > W - 10 && g.phase !== 'replay') txt('⛳ ' + Math.round(Math.abs(H0.hole - (g.phase === 'boss' ? g.bp.ball.x : b.x)) / 6) + ' 碼 ▶', W - 16, 300, 15, '#fff', 'right', { stroke: '#1b5e20', sw: 4 });
+  if (sx(H0.hole) < 10 && g.phase !== 'replay') txt('◀ ⛳ ' + Math.round(Math.abs(H0.hole - (g.phase === 'boss' ? g.bp.ball.x : b.x)) / 6) + ' 碼', 16, 300, 15, '#fff', 'left', { stroke: '#1b5e20', sw: 4 });
+  if (g.caddieT > 0 && cadX != null) txt('桿弟：「' + g.caddie + '」', clamp(sx(cadX) + 40, 130, W - 130), toS(cadX, golfGround(H0, cadX) - 66)[1], 13, '#1565c0', 'center', { stroke: '#fff', sw: 4 });
   if (g.phase === 'boss') {
-    const B = g.bp, bb = B.ball, bgy = golfGround(H0, B.last ? B.last.x : bb.x);
-    if (B.state !== 'summary') { const dx = (B.last ? B.last.x : H0.tee) - 30; drawGolfDurian(dx, golfGround(H0, dx), 0.28, 'normal', true); golfTrail(g, 'b', bb, '255,236,140'); golfBall(H0, bb.x, bb.y, true); }
+    const B = g.bp;
     ctx.fillStyle = 'rgba(255,255,255,.92)'; rr(W / 2 - 170, 62, 340, 34, 10); ctx.fill();
     txt(`😈 老闆先打｜${B.label || '準備中…'}`, W / 2, 85, 16, '#2e7d32', 'center');
     if (B.note && B.state !== 'summary') txt(B.note, W / 2, 124, 16, '#fff', 'center', { stroke: '#1b5e20', sw: 5 });
-    if (g.caddieT > 0) txt('桿弟：「' + g.caddie + '」', 150, tg - 64, 13, '#1565c0', 'center', { stroke: '#fff', sw: 4 });
-    if (B.state !== 'summary' && FC % 50 < 34) txt(isTouch ? '點一下快轉' : '按空白鍵快轉', W / 2, H - 70, 14, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
+    drawGolfWigUI(g);
+    if (B.state !== 'summary' && B.state !== 'wig' && FC % 50 < 34) txt(isTouch ? '點一下快轉' : '按空白鍵快轉', W / 2, H - 70, 14, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
     if (B.state === 'summary') {
       const real = g.boss[g.hole], claim = g.claim[g.hole], cheat = claim < real;
       ctx.fillStyle = 'rgba(255,255,255,.96)'; rr(180, 110, 600, 150, 14); ctx.fill(); ctx.strokeStyle = cheat ? '#c62828' : '#2e7d32'; ctx.lineWidth = 3; ctx.stroke();
@@ -5912,41 +6173,32 @@ function drawGolf() {
       if (B.t > 20 && FC % 50 < 34) txt(isTouch ? '點一下換你打' : '按空白鍵換你打', W / 2, 290, 14, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
     }
   }
-  // 自己的球＋阿葡
-  const b = g.ball, by = golfGround(H0, b.x);
-  if (g.phase !== 'boss') {
-    const fd = (g.phase === 'aim' || g.phase === 'power') ? golfDir() : (g.dir || 1);
-    if (g.phase === 'aim' || g.phase === 'power') drawGolfer(b.x - 24 * fd, by, 1.4, 0, fd, golfPutt()); else drawGolfer(g.last.x - 24 * fd, golfGround(H0, g.last.x), 1.4, g.swing, fd, golfOnGreen(H0, g.last.x));
-    golfTrail(g, 'p', b, '255,255,255');
-    if (g.phase !== 'holed' || Math.abs(b.x - H0.hole) > 3) golfBall(H0, b.x, b.y, false);
-  }
-  if (g.phase === 'aim' || g.phase === 'power') {             // 瞄準線＋力道條
-    const a = g.angle * Math.PI / 180, fd = golfDir(), putt = golfPutt();
-    ctx.setLineDash([5, 5]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x + Math.cos(a) * 90 * fd, b.y - Math.sin(a) * 90); ctx.stroke(); ctx.setLineDash([]);
-    txt(putt ? '⛳ 推桿' : Math.round(g.angle) + '°', b.x + Math.cos(a) * 104 * fd, b.y - Math.sin(a) * 104 - (putt ? 14 : 0), 13, '#fff', 'center', { stroke: '#1b5e20', sw: 3 });
-    if (fd < 0) txt('↩ 打過頭了，往回打', b.x, b.y - 70, 14, '#fff59d', 'center', { stroke: '#1b5e20', sw: 3 });
+  if (putting) {                                                // 力道條
     ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(W / 2 - 160, H - 58, 320, 22, 11); ctx.fill();
     if (g.phase === 'power') { const pg = ctx.createLinearGradient(W / 2 - 160, 0, W / 2 + 160, 0); pg.addColorStop(0, '#66bb6a'); pg.addColorStop(0.7, '#ffca28'); pg.addColorStop(1, '#e53935');
-      ctx.fillStyle = pg; rr(W / 2 - 160, H - 58, Math.max(10, 320 * g.power / 100), 22, 11); ctx.fill();
-      const pb = { x: b.x, y: b.y, rest: false, noTree: true }; [pb.vx, pb.vy] = golfVel(g.angle, g.power, golfPutt(), golfDir());   // 預覽：前半段軌跡
-      ctx.fillStyle = 'rgba(255,255,255,.75)'; for (let i = 0; i < 90; i++) { golfPhys(pb, H0, 0); if (i % 6 === 0) { circ(pb.x, pb.y, 2); ctx.fill(); } if (pb.rest) break; } }
+      ctx.fillStyle = pg; rr(W / 2 - 160, H - 58, Math.max(10, 320 * g.power / 100), 22, 11); ctx.fill(); }
     ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.5; for (let i = 1; i < 4; i++) { const x = W / 2 - 160 + 80 * i; ctx.beginPath(); ctx.moveTo(x, H - 58); ctx.lineTo(x, H - 36); ctx.stroke(); }
     txt(g.phase === 'aim' ? (golfPutt() ? (isTouch ? '👆 推桿：點一下開始蓄力' : '推桿：空白鍵開始蓄力') : isTouch ? '👆 點一下：決定角度' : '空白鍵：決定角度') : (isTouch ? '👆 再點一下：決定力道' : '空白鍵：決定力道'), W / 2, H - 70, 16, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
-    if (g.talk) { ctx.fillStyle = '#fff'; rr(20, tg - 150, 230, 30, 10); ctx.fill(); txt(g.talk, 135, tg - 130, 13, '#5d4037', 'center'); }
+    if (g.talk) { const tx = clamp(durX != null ? sx(durX) - 20 : 20, 10, W - 240), ty = clamp((durX != null ? durGy : 430) - 150, 110, 300);
+      ctx.fillStyle = '#fff'; rr(tx, ty, 230, 30, 10); ctx.fill(); txt(g.talk, tx + 115, ty + 20, 13, '#5d4037', 'center'); }
   }
-  for (const p of g.parts) { ctx.fillStyle = p.c; circ(p.x, p.y, 3); ctx.fill(); }
+  drawGolfSpinUI(g);
+  if (putting && golfPutt()) { drawPuttPanel(g, H0); drawPuttUI(g, H0); }
+  if (g.phase === 'fly' && g.t > 8 && !(fx.hit > 0) && FC % 50 < 36) txt(g.ball.land ? (isTouch ? '⏩ 點一下略過滾動' : '⏩ 按空白鍵略過滾動') : (isTouch ? '⏩ 點一下直接看結果' : '⏩ 空白鍵直接看結果'), W / 2, H - 70, 15, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
+  if (g.ffFlash > 0) { g.ffFlash--; ctx.fillStyle = `rgba(255,255,255,${g.ffFlash / 16 * 0.35})`; ctx.fillRect(0, 0, W, H); txt('⏩ 略過', W / 2, H / 2, 34, '#fff', 'center', { stroke: '#1b5e20', sw: 6 }); }
+  if ((g.phase === 'aim' || g.phase === 'fly') && !G.capture) drawBtn(W - 160, H - 92, 140, 32, META.golfFF ? '⏩ 滾動：自動略過' : '👀 滾動：看完', () => { META.golfFF = !META.golfFF; saveMeta(); SFX.coin(); }, META.golfFF ? '#00897b' : '#546e7a');
   // 上方資訊
   ctx.fillStyle = 'rgba(27,94,32,.88)'; rr(10, 10, W - 20, 40, 12); ctx.fill();
-  const meT = g.me.reduce((a, c) => a + c, 0), bT = g.claim.reduce((a, c) => a + c, 0);
-  txt(`⛳ ${H0.name}｜Par ${H0.par}｜這洞第 ${g.strokes} 桿`, 26, 37, 16, '#fff');
+  const meT = g.me.reduce((a, c) => a + (c || 0), 0), bT = g.claim.reduce((a, c) => a + (c || 0), 0);
+  txt(`⛳ ${g.wx ? GOLF_WX[g.wx].icon + ' ' : ''}${H0.name}｜Par ${H0.par}｜這洞第 ${g.strokes} 桿`, 26, 37, 16, '#fff');
   txt(`風 ${g.wind > 0 ? '→' : g.wind < 0 ? '←' : '·'} ${Math.abs(g.wind).toFixed(1)}　總桿：你 ${meT}／老闆「${bT}」`, W - 120, 37, 15, '#e8f5e9', 'right');
   if (g.msgT > 0 && g.msg) txt(g.msg, W / 2, 96, 22, '#fff', 'center', { stroke: '#1b5e20', sw: 6 });
-  if (g.phase === 'holed') {
+  if (g.phase === 'holed' && g.t > (golfHioNow(g) ? 165 : 38)) {
     ctx.fillStyle = 'rgba(255,255,255,.96)'; rr(W / 2 - 290, 70, 580, 290, 14); ctx.fill(); ctx.strokeStyle = '#2e7d32'; ctx.lineWidth = 3; ctx.stroke();
     txt(g.hio && g.me[g.hole] === 1 ? '🏆 一桿進洞！！' : `進洞！這洞 ${g.me[g.hole]} 桿`, W / 2, 108, 24, '#2e7d32', 'center');
     const d = g.me[g.hole] - g.claim[g.hole];
     txt(d < 0 ? '老闆的臉有點綠…（你這洞比他「少」桿）' : d <= 2 ? '老闆：「不錯不錯！」（讓得剛剛好）' : '老闆：「沒關係，下一洞加油」（他很開心）', W / 2, 138, 15, '#5d4037', 'center');
-    const sc = drawScorecard(W / 2 - 230, 154, g.hole);
+    const sc = drawScorecard(null, 154, g.hole);
     txt(`目前：你比老闆（自稱）${sc.d >= 0 ? '多' : '少'} ${Math.abs(sc.d)} 桿　🎯 讓桿目標：最後多 0～2 桿`, W / 2, 312, 14, sc.d < 0 ? '#c62828' : '#2e7d32', 'center');
     if (g.t > 40 && FC % 50 < 34) txt(isTouch ? '點一下下一洞' : '按空白鍵下一洞', W / 2, 342, 14, '#2e7d32', 'center');
   }
@@ -5954,29 +6206,55 @@ function drawGolf() {
     ctx.fillStyle = 'rgba(12,6,24,.55)'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#fffaf2'; rr(W / 2 - 310, 24, 620, 496, 18); ctx.fill(); ctx.strokeStyle = '#2e7d32'; ctx.lineWidth = 5; ctx.stroke();
     txt(g.result.title, W / 2, 72, 34, '#2e7d32', 'center');
-    const sc = drawScorecard(W / 2 - 230, 92, null);
+    const sc = drawScorecard(null, 92, null);
     txt(`老闆實際打了 ${sc.real} 桿，但他堅持是 ${sc.claim} 桿（差了 ${sc.real - sc.claim} 桿，大家都沒看到）`, W / 2, 254, 14, '#6d4c41', 'center', { weight: 'normal' });
     g.result.lines.forEach((l, i) => txtFit(l, W / 2, 292 + i * 34, 560, 17, i === g.result.lines.length - 1 ? '#e65100' : '#4a3b5c', 'center'));
-    if (g.t > 60 && FC % 60 < 42) txt(isTouch ? '點一下回標題' : '按 Enter 回標題', W / 2, 500, 15, '#2e7d32', 'center');
+    if (g.t > 60 && FC % 60 < 42) txt(g.daily ? (isTouch ? '點一下回出勤卡' : '按 Enter 回出勤卡') : isTouch ? '點一下回標題' : '按 Enter 回標題', W / 2, 500, 15, '#2e7d32', 'center');
   }
-  if (g.phase !== 'done' && !G.capture) drawBtn(W - 120, H - 50, 100, 34, '◀ 不打了', () => { G.golf = null; goTitle(); }, '#455a64');
+  if (g.phase !== 'done' && !G.capture) drawBtn(W - 120, H - 50, 100, 34, '◀ 不打了', golfExit, '#455a64');
 }
-
+function drawGolfMap(g, H0, cam, vw = W) {                            // 長洞的小地圖（轉播風）
+  const len = golfLen(H0), x0 = 18, y0 = 58, w = 210, hgt = 34, mx = x => x0 + 8 + x / len * w, my = y => y0 + 6 + clamp((y - 300) / 200, 0, 1) * (hgt - 10);
+  ctx.fillStyle = 'rgba(20,70,25,.78)'; rr(x0, y0, w + 100, hgt + 4, 9); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(mx(cam), y0 + 3, vw / len * w, hgt - 2);
+  ctx.fillStyle = '#7cc957'; ctx.beginPath(); ctx.moveTo(mx(0), y0 + hgt + 2); for (const [x, y] of H0.pts) ctx.lineTo(mx(x), my(y)); ctx.lineTo(mx(len), y0 + hgt + 2); ctx.fill();
+  if (H0.water) { ctx.fillStyle = '#4fc3f7'; ctx.fillRect(mx(H0.water[0]), my(H0.water[2]), mx(H0.water[1]) - mx(H0.water[0]), 5); }
+  for (const s of golfSands(H0)) { ctx.fillStyle = '#ffe082'; ctx.fillRect(mx(s[0]), my(golfGround(H0, s[0])) - 1, mx(s[1]) - mx(s[0]), 3); }
+  for (const t of golfTrees(H0)) { ctx.fillStyle = '#1b5e20'; circ(mx(t[0]), my(t[1]) - 3, 3.5); ctx.fill(); }
+  ctx.fillStyle = '#b9f6ca'; ctx.fillRect(mx(H0.green[0]), my(golfGround(H0, H0.green[0])) - 1, mx(H0.green[1]) - mx(H0.green[0]), 3);
+  const fx = mx(H0.hole), fy = my(golfGround(H0, H0.hole)); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx, fy - 12); ctx.stroke(); ctx.fillStyle = '#e53935'; ctx.fillRect(fx, fy - 12, 6, 4);
+  const dot = (b, c) => { ctx.fillStyle = c; circ(mx(b.x), Math.min(my(b.y + 5), my(golfGround(H0, b.x))) - 2, 3); ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.stroke(); };
+  if (g.phase === 'boss' && g.bp.state !== 'summary') dot(g.bp.ball, '#ffd54f'); dot(g.ball, '#fff');
+  const bx = g.phase === 'boss' && g.bp.state !== 'summary' ? g.bp.ball.x : g.ball.x;
+  txt('距洞', x0 + w + 20, y0 + 16, 11, '#c8e6c9', 'left', { weight: 'normal' });
+  txt(Math.round(Math.abs(H0.hole - bx) / 6) + ' 碼', x0 + w + 20, y0 + 33, 15, '#fff', 'left');
+}
+function golfCamTarget(g, H0) {
+  const len = golfLen(H0); if (len <= W) return 0;
+  let x, lead;
+  if (g.phase === 'boss' && g.bp.state !== 'summary') { const B = g.bp; x = B.ball.x; lead = B.ball.rest ? (B.ball.x > H0.hole ? 0.7 : 0.3) : 0.5; }
+  else if (g.phase === 'holed' || g.phase === 'done') { x = H0.hole; lead = 0.6; }
+  else { x = g.ball.x; lead = g.phase === 'fly' ? 0.5 : g.ball.x > H0.hole ? 0.7 : 0.3; }
+  return clamp(x - W * lead, 0, len - W);
+}
 // ---------- 高爾夫：場景美術（純 Canvas 手繪，不用圖檔） ----------
 const GOLF_LOOK = [
   { sky: ['#3f8fd8', '#8cc8f0', '#eef8ff'], sun: [800, 138], sunC: '255,250,225', mtn: ['#a9c2d9', '#8fb3a3'], tint: null },                      // 早上
   { sky: ['#2b78cc', '#7fc0ef', '#dff1ff'], sun: [230, 122], sunC: '255,255,240', mtn: ['#a0bad5', '#86ab98'], tint: null },                      // 中午
-  { sky: ['#3d5592', '#ee9a6c', '#ffd48e'], sun: [830, 262], sunC: '255,214,140', mtn: ['#9c7f9e', '#7f8270'], tint: 'rgba(255,135,40,.1)', cloud: ['#fff3e2', '#f7cfae', '#d9927a'] },    // 黃昏（老闆的私人果嶺）
+  { sky: ['#3a7fc8', '#a9cfe8', '#fbeccc'], sun: [860, 170], sunC: '255,242,205', mtn: ['#a7b9cf', '#8ea995'], tint: 'rgba(255,190,90,.04)' },     // 下午
+  { sky: ['#4a6aa8', '#e8b88a', '#ffe2b0'], sun: [760, 228], sunC: '255,226,160', mtn: ['#a597ad', '#8a917c'], tint: 'rgba(255,160,60,.06)', cloud: ['#fff8ec', '#f9dfc4', '#dfb39a'] },   // 傍晚
+  { sky: ['#3d5592', '#ee9a6c', '#ffd48e'], sun: [830, 262], sunC: '255,214,140', mtn: ['#9c7f9e', '#7f8270'], tint: 'rgba(255,135,40,.1)', cloud: ['#fff3e2', '#f7cfae', '#d9927a'] },     // 黃昏
 ];
 const gR = (i, s = 0) => (hsh(i * 7919 + s * 104729 + 17) % 10000) / 10000;
+function golfLen(H0) { return H0.len || W; }
 function golfLine(H0, x0, x1, off = 0) { for (let x = x0; x < x1; x += 5) ctx.lineTo(x, golfGround(H0, x) + off); ctx.lineTo(x1, golfGround(H0, x1) + off); }
 function golfStrip(H0, x0, x1, th) {                        // 沿著地面的一條帶子（看得到的草皮表面）
   ctx.beginPath(); ctx.moveTo(x0, golfGround(H0, x0)); golfLine(H0, x0, x1);
   for (let x = x1; x > x0; x -= 5) ctx.lineTo(x, golfGround(H0, x) + th); ctx.lineTo(x0, golfGround(H0, x0) + th); ctx.closePath();
 }
 function golfWaterX(H0) {                                    // 水面跟兩邊坡的交點
-  const [a, b, wy] = H0.water; let xl = a, xr = b;
-  while (xl > 0 && golfGround(H0, xl - 1) >= wy) xl--; while (xr < W && golfGround(H0, xr + 1) >= wy) xr++;
+  const [a, b, wy] = H0.water, len = golfLen(H0); let xl = a, xr = b;
+  while (xl > 0 && golfGround(H0, xl - 1) >= wy) xl--; while (xr < len && golfGround(H0, xr + 1) >= wy) xr++;
   return [xl, xr, wy];
 }
 function golfCloud(x, y, s, c = ['#ffffff', '#f3f7fb', '#c6d5e6']) {
@@ -5985,39 +6263,38 @@ function golfCloud(x, y, s, c = ['#ffffff', '#f3f7fb', '#c6d5e6']) {
   for (const [dx, dy, r] of [[-40, 6, 16], [-18, -8, 23], [10, -16, 28], [38, -4, 21], [58, 6, 14], [0, 6, 22], [-56, 9, 11]]) { ctx.moveTo(x + (dx + r) * s, y + dy * s); ctx.arc(x + dx * s, y + dy * s, r * s, 0, Math.PI * 2); }
   ctx.fill();
 }
-function drawGolfScene(g, H0) {
-  const L = GOLF_LOOK[g.hole] || GOLF_LOOK[0];
-  // 天空＋太陽
+function drawGolfSky(g, H0, cam, offY = 0) {                           // 天空、遠山、會館、樹林（有視差）
+  const L = golfLook(g), len = golfLen(H0);
   const sk = ctx.createLinearGradient(0, 0, 0, 400); sk.addColorStop(0, L.sky[0]); sk.addColorStop(0.62, L.sky[1]); sk.addColorStop(1, L.sky[2]);
-  ctx.fillStyle = sk; ctx.fillRect(0, 0, W, H);
-  const [sx, sy] = L.sun, sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, L.tint ? 230 : 170);
+  ctx.fillStyle = sk; ctx.fillRect(-20, -20, W + 40, H + 40);
+  const [sx, sy] = L.sun, sr = L.tint ? 230 : 170, sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, sr);
   sg.addColorStop(0, `rgba(${L.sunC},1)`); sg.addColorStop(0.1, `rgba(${L.sunC},.9)`); sg.addColorStop(0.28, `rgba(${L.sunC},.28)`); sg.addColorStop(1, `rgba(${L.sunC},0)`);
-  ctx.fillStyle = sg; ctx.fillRect(sx - 230, sy - 230, 460, 460);
-  // 雲（跟著風飄）
-  for (let i = 0; i < 5; i++) { const m = W + 300, sp = 0.1 + i * 0.03 + g.wind * 0.22; let x = (gR(i, 1) * m + FC * sp) % m; if (x < 0) x += m; golfCloud(x - 150, 84 + gR(i, 2) * 130, 0.55 + gR(i, 3) * 0.6, L.cloud); }
-  // 鳥
+  if (!golfWet(g) && g.phase !== 'storm') { ctx.fillStyle = sg; ctx.fillRect(sx - sr, sy - sr, sr * 2, sr * 2); }
+  else { ctx.fillStyle = g.wx === 'storm' || g.phase === 'storm' ? 'rgba(40,48,66,.66)' : 'rgba(84,96,114,.52)'; ctx.fillRect(-20, -20, W + 40, H + 40); }
+  for (let i = 0; i < 5; i++) { const m = W + 300, sp = 0.1 + i * 0.03 + g.wind * 0.22; let x = (gR(i, 1) * m + FC * sp - cam * 0.05) % m; if (x < 0) x += m; golfCloud(x - 150, 84 + gR(i, 2) * 130 + offY * 0.5, 0.55 + gR(i, 3) * 0.6, golfWet(g) ? ['#cfd8dc', '#a7b6bf', '#6f828c'] : L.cloud); }
   ctx.strokeStyle = 'rgba(40,45,60,.55)'; ctx.lineWidth = 1.4; ctx.beginPath();
   for (let i = 0; i < 3; i++) { const x = ((gR(i, 9) * 1400 + FC * (0.45 + i * 0.1)) % 1400) - 200, y = 170 + gR(i, 8) * 60 + Math.sin(FC * 0.03 + i) * 6, f = Math.sin(FC * 0.22 + i * 2) * 3;
     ctx.moveTo(x - 6, y - 2 - f); ctx.quadraticCurveTo(x - 3, y - 3, x, y); ctx.quadraticCurveTo(x + 3, y - 3, x + 6, y - 2 - f); }
   ctx.stroke();
-  // 遠山（兩層，越遠越淡）
-  const mtn = (base, amp, seed, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, H);
-    for (let x = 0; x <= W + 8; x += 8) ctx.lineTo(x, base - Math.abs(Math.sin(x * 0.0042 + seed)) * amp - Math.sin(x * 0.013 + seed * 2) * amp * 0.22 - Math.sin(x * 0.047 + seed) * 3);
+  ctx.save(); ctx.translate(0, offY);
+  const mtn = (base, amp, seed, col, par) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, H);
+    for (let x = 0; x <= W + 8; x += 8) { const u = x + cam * par; ctx.lineTo(x, base - Math.abs(Math.sin(u * 0.0042 + seed)) * amp - Math.sin(u * 0.013 + seed * 2) * amp * 0.22 - Math.sin(u * 0.047 + seed) * 3); }
     ctx.lineTo(W, H); ctx.fill(); };
-  mtn(338, 92, 1.3 + g.hole, L.mtn[0]);
+  mtn(338, 92, 1.3 + g.hole, L.mtn[0], 0.08);
   let hz = ctx.createLinearGradient(0, 250, 0, 390); hz.addColorStop(0, 'rgba(255,255,255,0)'); hz.addColorStop(1, 'rgba(255,255,255,.38)'); ctx.fillStyle = hz; ctx.fillRect(0, 250, W, 140);
-  mtn(378, 44, 4.1 + g.hole * 0.7, L.mtn[1]);
-  // 會館（遠遠的）
-  const cx0 = [600, 640, 516][g.hole] || 600, cy = 392;
+  mtn(378, 44, 4.1 + g.hole * 0.7, L.mtn[1], 0.18);
+  const P = 0.35, off = cam * P;
+  ctx.save(); ctx.translate(-off, 0);
+  const cx0 = ([600, 640, 516, 560, 600][g.hole] || 600) + (len - W) * P, cy = 392;    // 會館（遠遠的）
   ctx.fillStyle = '#ebe6da'; ctx.fillRect(cx0, cy - 24, 48, 26); ctx.fillStyle = '#f6f3ec'; ctx.fillRect(cx0 + 40, cy - 36, 32, 38);
   ctx.fillStyle = '#8d4b3b'; ctx.beginPath(); ctx.moveTo(cx0 - 6, cy - 24); ctx.lineTo(cx0 + 20, cy - 34); ctx.lineTo(cx0 + 46, cy - 24); ctx.fill();
   ctx.beginPath(); ctx.moveTo(cx0 + 35, cy - 36); ctx.lineTo(cx0 + 56, cy - 47); ctx.lineTo(cx0 + 77, cy - 36); ctx.fill();
   ctx.fillStyle = 'rgba(60,80,100,.5)'; for (let i = 0; i < 4; i++) ctx.fillRect(cx0 + 5 + i * 9, cy - 16, 5, 6); for (let i = 0; i < 2; i++) ctx.fillRect(cx0 + 46 + i * 12, cy - 28, 6, 7);
   ctx.strokeStyle = '#eceff1'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx0 + 56, cy - 47); ctx.lineTo(cx0 + 56, cy - 62); ctx.stroke();
   ctx.fillStyle = '#c62828'; ctx.beginPath(); ctx.moveTo(cx0 + 56, cy - 62); ctx.lineTo(cx0 + 66 + Math.sin(FC * 0.12) * 1.5, cy - 59); ctx.lineTo(cx0 + 56, cy - 56); ctx.fill();
-  // 遠處草地＋樹林
-  const md = ctx.createLinearGradient(0, 392, 0, H); md.addColorStop(0, '#86b35a'); md.addColorStop(1, '#4f8a37'); ctx.fillStyle = md; ctx.fillRect(0, 394, W, H - 394);
-  const crowns = []; for (let i = 0, x = -12; x < W + 20; i++) { const r = 8 + gR(i, 5) * 10, tall = gR(i, 7) > 0.86; crowns.push([x, 401 - gR(i, 6) * 8 - r * (tall ? 1.5 : 0.7), r, tall]); x += r * 1.25; }
+  ctx.restore();
+  const md = ctx.createLinearGradient(0, 392, 0, H); md.addColorStop(0, '#86b35a'); md.addColorStop(1, '#4f8a37'); ctx.fillStyle = md; ctx.fillRect(-20, 394, W + 40, H + 40);
+  const crowns = []; for (let i = 0, x = -12; x < W + (len - W) * P + 20; i++) { const r = 8 + gR(i, 5) * 10, tall = gR(i, 7) > 0.86; if (x > off - 30 && x < off + W + 30) crowns.push([x - off, 401 - gR(i, 6) * 8 - r * (tall ? 1.5 : 0.7), r, tall]); x += r * 1.25; }
   ctx.fillStyle = '#3c6a42'; ctx.beginPath(); ctx.rect(0, 393, W, 9);
   for (const [x, y, r, t] of crowns) { ctx.moveTo(x + r, y); if (t) ctx.ellipse(x, y, r * 0.62, r * 1.6, 0, 0, Math.PI * 2); else ctx.arc(x, y, r, 0, Math.PI * 2); }
   ctx.fill();
@@ -6025,53 +6302,52 @@ function drawGolfScene(g, H0) {
   for (const [x, y, r, t] of crowns) { const rx = x - r * 0.25, ry = y - r * (t ? 0.6 : 0.3); ctx.moveTo(rx + r * 0.5, ry); if (t) ctx.ellipse(rx, ry, r * 0.3, r * 0.9, 0, 0, Math.PI * 2); else ctx.arc(rx, ry, r * 0.55, 0, Math.PI * 2); }
   ctx.fill();
   hz = ctx.createLinearGradient(0, 340, 0, 404); hz.addColorStop(0, 'rgba(225,238,248,.05)'); hz.addColorStop(1, 'rgba(225,238,248,.28)'); ctx.fillStyle = hz; ctx.fillRect(0, 340, W, 64);
-  // 地面本體（前方的草地）
+  ctx.restore();
+}
+function drawGolfGround(g, H0, cam, vw = W) {                        // 球場本體（世界座標，只畫看得到的範圍）
+  const len = golfLen(H0), v0 = Math.max(0, cam - 30), v1 = Math.min(len, cam + vw + 30);
   const gt = Math.min(...H0.pts.map(p => p[1]));
   const gb = ctx.createLinearGradient(0, gt, 0, H); gb.addColorStop(0, '#4f9d39'); gb.addColorStop(0.5, '#3d862f'); gb.addColorStop(1, '#2a6a24');
-  ctx.fillStyle = gb; ctx.beginPath(); ctx.moveTo(0, H); for (const [x, y] of H0.pts) ctx.lineTo(x, y); ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = gb; ctx.beginPath(); ctx.moveTo(0, H); for (const [x, y] of H0.pts) ctx.lineTo(x, y); ctx.lineTo(len, golfGround(H0, len)); ctx.lineTo(len, H); ctx.closePath(); ctx.fill();
   ctx.save(); ctx.clip();
   ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.beginPath();                                   // 割草斜紋
-  for (let x = -260; x < W + 100; x += 76) { ctx.moveTo(x, gt - 10); ctx.lineTo(x + 38, gt - 10); ctx.lineTo(x + 38 + 120, H); ctx.lineTo(x + 120, H); }
+  for (let x = Math.floor((v0 - 200) / 76) * 76; x < v1 + 40; x += 76) { ctx.moveTo(x, gt - 10); ctx.lineTo(x + 38, gt - 10); ctx.lineTo(x + 38 + 120, H); ctx.lineTo(x + 120, H); }
   ctx.fill();
-  ctx.fillStyle = 'rgba(15,55,10,.2)'; for (let i = 0; i < 260; i++) ctx.fillRect(gR(i, 11) * W, gt + gR(i, 12) * (H - gt), 2, 1.5);
-  ctx.fillStyle = 'rgba(190,240,140,.18)'; for (let i = 0; i < 120; i++) ctx.fillRect(gR(i, 21) * W, gt + 14 + gR(i, 22) * (H - gt), 1.5, 1.5);
+  for (let c = Math.floor(v0 / 240); c * 240 < v1; c++) {
+    ctx.fillStyle = 'rgba(15,55,10,.2)'; for (let i = 0; i < 65; i++) ctx.fillRect(c * 240 + gR(c * 131 + i, 11) * 240, gt + gR(c * 131 + i, 12) * (H - gt), 2, 1.5);
+    ctx.fillStyle = 'rgba(190,240,140,.18)'; for (let i = 0; i < 30; i++) ctx.fillRect(c * 240 + gR(c * 131 + i, 21) * 240, gt + 14 + gR(c * 131 + i, 22) * (H - gt), 1.5, 1.5);
+  }
   ctx.restore();
-  // 草皮表面（球道）＋割草條紋
-  golfStrip(H0, 0, W, 16); ctx.fillStyle = '#63b947'; ctx.fill();
-  ctx.save(); ctx.clip(); ctx.fillStyle = 'rgba(255,255,255,.1)'; for (let x = 0; x < W; x += 52) ctx.fillRect(x, 0, 26, H);
-  ctx.restore();
-  ctx.strokeStyle = 'rgba(20,70,10,.28)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, golfGround(H0, 0) + 16); golfLine(H0, 0, W, 16); ctx.stroke();
-  // 發球台
-  const t0 = H0.tee - 46, t1 = H0.tee + 32;
+  golfStrip(H0, v0, v1, 16); ctx.fillStyle = '#63b947'; ctx.fill();
+  ctx.save(); ctx.clip(); ctx.fillStyle = 'rgba(255,255,255,.1)'; for (let x = Math.floor(v0 / 52) * 52; x < v1; x += 52) ctx.fillRect(x, 0, 26, H); ctx.restore();
+  ctx.strokeStyle = 'rgba(20,70,10,.28)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(v0, golfGround(H0, v0) + 16); golfLine(H0, v0, v1, 16); ctx.stroke();
+  const t0 = H0.tee - 46, t1 = H0.tee + 32;                                                    // 發球台
   golfStrip(H0, t0, t1, 16); ctx.fillStyle = '#7fd05c'; ctx.fill();
   ctx.save(); ctx.clip(); ctx.fillStyle = 'rgba(255,255,255,.12)'; for (let x = t0; x < t1; x += 12) ctx.fillRect(x, 0, 6, H); ctx.restore();
   for (const mx of [t0 + 4, t1 - 4]) { const my = golfGround(H0, mx) - 4; const mg = ctx.createRadialGradient(mx - 1.5, my - 1.5, 0.5, mx, my, 5); mg.addColorStop(0, '#90caf9'); mg.addColorStop(1, '#0d47a1'); ctx.fillStyle = mg; circ(mx, my, 4.5); ctx.fill(); }
-  // 果嶺（外圈＋細條紋）
-  const [g0, g1] = H0.green;
+  const [g0, g1] = H0.green;                                                                    // 果嶺
   golfStrip(H0, g0 - 14, g1 + 14, 16); ctx.fillStyle = '#74c853'; ctx.fill();
   golfStrip(H0, g0, g1, 16); const gg = ctx.createLinearGradient(0, golfGround(H0, g0), 0, golfGround(H0, g0) + 16); gg.addColorStop(0, '#9be674'); gg.addColorStop(1, '#73cc52'); ctx.fillStyle = gg; ctx.fill();
   ctx.save(); ctx.clip(); ctx.fillStyle = 'rgba(255,255,255,.1)'; for (let x = g0; x < g1; x += 18) ctx.fillRect(x, 0, 9, H); ctx.restore();
   ctx.strokeStyle = '#c8f7a2'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(g0, golfGround(H0, g0)); golfLine(H0, g0, g1); ctx.stroke();
-  // 沙坑
-  if (H0.sand) {
-    const [s0, s1] = H0.sand, dep = x => golfGround(H0, x) + 3 + Math.sin(Math.PI * (x - s0) / (s1 - s0)) * 15;
+  for (const [s0, s1] of golfSands(H0)) {                                                         // 沙坑
+    const dep = x => golfGround(H0, x) + 3 + Math.sin(Math.PI * (x - s0) / (s1 - s0)) * 15;
     ctx.beginPath(); ctx.moveTo(s0, golfGround(H0, s0)); golfLine(H0, s0, s1); for (let x = s1; x > s0; x -= 5) ctx.lineTo(x, dep(x)); ctx.closePath();
     const sd = ctx.createLinearGradient(0, golfGround(H0, s0), 0, golfGround(H0, s0) + 20); sd.addColorStop(0, '#f7e7b4'); sd.addColorStop(1, '#d6b871'); ctx.fillStyle = sd; ctx.fill();
     ctx.save(); ctx.clip();
     ctx.fillStyle = 'rgba(120,90,30,.35)'; for (let i = 0; i < 70; i++) { const x = s0 + gR(i, 31) * (s1 - s0); ctx.fillRect(x, golfGround(H0, x) + 1 + gR(i, 32) * 16, 1.2, 1.2); }
     ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = 1; for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(s0 + 10, golfGround(H0, s0) + 4 + k * 4); ctx.quadraticCurveTo((s0 + s1) / 2, golfGround(H0, (s0 + s1) / 2) + 8 + k * 4, s1 - 10, golfGround(H0, s1) + 4 + k * 4); ctx.stroke(); }
-    ctx.fillStyle = 'rgba(70,50,10,.22)'; ctx.beginPath(); ctx.moveTo(s0, golfGround(H0, s0)); ctx.quadraticCurveTo(s0 + 18, golfGround(H0, s0) + 14, s0 + 40, dep(s0 + 40)); ctx.lineTo(s0, dep(s0 + 40) + 8); ctx.fill();   // 沙坑邊的陰影
+    ctx.fillStyle = 'rgba(70,50,10,.22)'; ctx.beginPath(); ctx.moveTo(s0, golfGround(H0, s0)); ctx.quadraticCurveTo(s0 + 18, golfGround(H0, s0) + 14, s0 + 40, dep(s0 + 40)); ctx.lineTo(s0, dep(s0 + 40) + 8); ctx.fill();
     ctx.restore();
   }
-  // 水池
   let wxl = 0, wxr = 0;
-  if (H0.water) {
+  if (H0.water) {                                                                               // 水池
     const [xl, xr, wy] = golfWaterX(H0); wxl = xl; wxr = xr;
     ctx.beginPath(); ctx.moveTo(xl, wy); ctx.lineTo(xr, wy); ctx.lineTo(xr - 10, wy + 22); ctx.lineTo(xr - 22, H); ctx.lineTo(xl + 22, H); ctx.lineTo(xl + 10, wy + 22); ctx.closePath();
     const wg = ctx.createLinearGradient(0, wy, 0, H); wg.addColorStop(0, '#6fcbef'); wg.addColorStop(0.12, '#3a9fd2'); wg.addColorStop(0.55, '#1e6fa3'); wg.addColorStop(1, '#134a72'); ctx.fillStyle = wg; ctx.fill();
     ctx.save(); ctx.clip();
     ctx.fillStyle = 'rgba(255,255,255,.28)'; ctx.fillRect(xl, wy, xr - xl, 3);
-    for (let i = 0; i < 9; i++) { const bx = xl + 40 + gR(i, 41) * (xr - xl - 80), byy = wy + 52 + gR(i, 42) * (H - wy - 64); ctx.fillStyle = i % 3 ? 'rgba(255,236,120,.38)' : 'rgba(240,244,248,.32)'; circ(bx, byy, 4); ctx.fill(); }   // 沉在水底的球
+    for (let i = 0; i < 9; i++) { const bx = xl + 40 + gR(i, 41) * (xr - xl - 80), byy = wy + 52 + gR(i, 42) * (H - wy - 64); ctx.fillStyle = i % 3 ? 'rgba(255,236,120,.38)' : 'rgba(240,244,248,.32)'; circ(bx, byy, 4); ctx.fill(); }
     ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = 1.3;
     for (let i = 0; i < 14; i++) { const row = i % 4, y = wy + 9 + row * 9 + row * row * 3, span = xr - xl - 40, x = xl + 20 + ((gR(i, 43) * span + FC * (0.25 + row * 0.1)) % span), w = 10 + row * 5;
       ctx.globalAlpha = 0.9 - row * 0.18; ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + w / 2, y - 2.5, x + w, y); ctx.stroke(); }
@@ -6079,32 +6355,34 @@ function drawGolfScene(g, H0) {
     for (let i = 0; i < 6; i++) { const ph = (FC * 0.05 + gR(i, 44) * 6.28) % 6.28, a = Math.max(0, Math.sin(ph)); if (a < 0.2) continue;
       const x = xl + 30 + gR(i, 45) * (xr - xl - 60), y = wy + 6 + gR(i, 46) * 26, r = 3.5 * a; ctx.fillStyle = `rgba(255,255,255,${a * 0.85})`; ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r * 0.3, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r * 0.3, y); ctx.fill(); ctx.fillRect(x - r, y - 0.4, r * 2, 0.8); }
     ctx.restore();
-    for (const [lx, lr] of [[xl + 70, 11], [xr - 90, 8]]) { ctx.fillStyle = '#4caf50'; ctx.beginPath(); ctx.ellipse(lx, wy + 4, lr, lr * 0.32, 0, 0.35, Math.PI * 2 - 0.15); ctx.lineTo(lx, wy + 4); ctx.fill(); }   // 荷葉
+    for (const [lx, lr] of [[xl + 70, 11], [xr - 90, 8]]) { ctx.fillStyle = '#4caf50'; ctx.beginPath(); ctx.ellipse(lx, wy + 4, lr, lr * 0.32, 0, 0.35, Math.PI * 2 - 0.15); ctx.lineTo(lx, wy + 4); ctx.fill(); }
     ctx.strokeStyle = 'rgba(60,40,20,.55)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(xl, wy); ctx.lineTo(xl + 10, wy + 22); ctx.lineTo(xl + 22, H); ctx.moveTo(xr, wy); ctx.lineTo(xr - 10, wy + 22); ctx.lineTo(xr - 22, H); ctx.stroke();
-    for (const [bx, d] of [[xl + 4, 1], [xr - 4, -1]]) for (let k = 0; k < 4; k++) {   // 蘆葦
+    for (const [bx, d] of [[xl + 4, 1], [xr - 4, -1]]) for (let k = 0; k < 4; k++) {
       const x = bx + d * k * 5, sway = Math.sin(FC * 0.04 + k + bx) * 2 + g.wind * 3, hgt = 26 + k * 7 - (k === 3 ? 12 : 0);
       ctx.strokeStyle = '#557a2a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x, wy + 2); ctx.quadraticCurveTo(x + sway * 0.4, wy - hgt / 2, x + sway, wy - hgt); ctx.stroke();
       if (k % 2 === 0) { ctx.fillStyle = '#6d4c2f'; ell(x + sway * 0.95, wy - hgt + 6, 2.4, 6, sway * 0.03); ctx.fill(); }
     }
     txt('水池（老闆的球都在這裡）', (xl + xr) / 2, wy + 74, 12, '#e1f5fe', 'center', { weight: 'normal', stroke: 'rgba(10,50,80,.6)', sw: 3 });
   }
-  // 草的邊緣＋小草
-  const skip = x => (x > g0 - 14 && x < g1 + 14) || (H0.sand && x > H0.sand[0] - 2 && x < H0.sand[1] + 2) || (H0.water && x > wxl - 3 && x < wxr + 3);
+  const skip = x => (x > g0 - 14 && x < g1 + 14) || golfSands(H0).some(s => x > s[0] - 2 && x < s[1] + 2) || (H0.water && x > wxl - 3 && x < wxr + 3);
   ctx.strokeStyle = '#a4e07e'; ctx.lineWidth = 1.5; ctx.beginPath(); let pen = false;
-  for (let x = 0; x <= W; x += 5) { if (skip(x)) { pen = false; continue; } const y = golfGround(H0, x) + 0.5; if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true; } }
+  for (let x = Math.floor(v0 / 5) * 5; x <= v1; x += 5) { if (skip(x)) { pen = false; continue; } const y = golfGround(H0, x) + 0.5; if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true; } }
   ctx.stroke();
   for (const [col, sd, off] of [['#3a8a2c', 13, 0], ['#8ad36a', 15, 2]]) {
     ctx.strokeStyle = col; ctx.lineWidth = 1.1; ctx.beginPath();
-    for (let i = 0, x = off; x < W; i++, x += 4) { if (skip(x) || (x > t0 && x < t1)) continue; const y = golfGround(H0, x) + 1.5, h = 2 + gR(i, sd) * 4.5, lean = (gR(i, sd + 1) - 0.5) * 3 + Math.sin(FC * 0.05 + x * 0.04) * 0.7 * (1 + Math.abs(g.wind) * 2); ctx.moveTo(x, y); ctx.lineTo(x + lean, y - h); }
+    for (let x = Math.floor(v0 / 4) * 4 + off; x < v1; x += 4) { const i = x >> 2; if (skip(x) || (x > t0 && x < t1)) continue; const y = golfGround(H0, x) + 1.5, h = 2 + gR(i, sd) * 4.5, lean = (gR(i, sd + 1) - 0.5) * 3 + Math.sin(FC * 0.05 + x * 0.04) * 0.7 * (1 + Math.abs(g.wind) * 2); ctx.moveTo(x, y); ctx.lineTo(x + lean, y - h); }
     ctx.stroke();
   }
-  // 小花（長草區）
-  for (let i = 0; i < 22; i++) { const x = gR(i, 51) * W; if (skip(x)) continue; const y = golfGround(H0, x) + 26 + gR(i, 52) * (H - golfGround(H0, x) - 34); ctx.fillStyle = i % 3 ? '#fff9c4' : '#fff'; circ(x, y, 1.6); ctx.fill(); }
-  // 150 碼樁
-  const mk = H0.hole - 170; if (!skip(mk)) { const my = golfGround(H0, mk); for (let k = 0; k < 4; k++) { ctx.fillStyle = k % 2 ? '#fff' : '#d32f2f'; ctx.fillRect(mk - 1.5, my - 16 + k * 4, 3, 4); } }
-  // 樹
-  if (H0.tree) {
-    const [tx, ty, tr] = H0.tree, base = golfGround(H0, tx), slope = Math.atan2(golfGround(H0, tx + 10) - golfGround(H0, tx - 10), 20);
+  for (let c = Math.floor(v0 / 240); c * 240 < v1; c++) for (let i = 0; i < 6; i++) {           // 小花
+    const x = c * 240 + gR(c * 17 + i, 51) * 240; if (skip(x)) continue; const y = golfGround(H0, x) + 26 + gR(c * 17 + i, 52) * (H - golfGround(H0, x) - 34); ctx.fillStyle = i % 3 ? '#fff9c4' : '#fff'; circ(x, y, 1.6); ctx.fill(); }
+  for (const yd of len > W ? [100, 150, 200, 250] : [150]) {                                  // 碼數樁：100 紅、150 白、200 藍…
+    const mk = H0.hole - (len > W ? yd * 6 : 170); if (mk < H0.tee + 60 || skip(mk)) continue;
+    const my = golfGround(H0, mk), col = { 100: '#d32f2f', 150: '#d32f2f', 200: '#1565c0', 250: '#f9a825' }[yd];
+    for (let k = 0; k < 4; k++) { ctx.fillStyle = k % 2 ? '#fff' : col; ctx.fillRect(mk - 1.5, my - 16 + k * 4, 3, 4); }
+    if (len > W) txt(String(yd), mk, my - 20, 9, '#fff', 'center', { stroke: 'rgba(0,0,0,.45)', sw: 2, weight: 'normal' });
+  }
+  for (const [tx, ty, tr] of golfTrees(H0)) {                                                     // 樹
+    const base = golfGround(H0, tx), slope = Math.atan2(golfGround(H0, tx + 10) - golfGround(H0, tx - 10), 20);
     ctx.fillStyle = 'rgba(10,40,5,.28)'; ell(tx + 14, base + 2, tr * 0.95, 6, slope); ctx.fill();
     const tg2 = ctx.createLinearGradient(tx - 9, 0, tx + 9, 0); tg2.addColorStop(0, '#8a6242'); tg2.addColorStop(1, '#4e3421'); ctx.fillStyle = tg2;
     ctx.beginPath(); ctx.moveTo(tx - 14, base + 3); ctx.quadraticCurveTo(tx - 6, base - 6, tx - 6, ty); ctx.lineTo(tx + 6, ty); ctx.quadraticCurveTo(tx + 6, base - 6, tx + 15, base + 3); ctx.fill();
@@ -6114,23 +6392,27 @@ function drawGolfScene(g, H0) {
     pass('#1d5226', 3, 5, 1); pass('#2e7a35', 0, 0, 0.98); pass('#3f9140', -4, -5, 0.72); pass('#5aa94f', -8, -10, 0.38);
     ctx.fillStyle = 'rgba(190,240,140,.45)'; for (let i = 0; i < 26; i++) { const a = gR(i, 61) * 6.28, d = gR(i, 62) * tr * 0.9; circ(tx + Math.cos(a) * d - 6, ty - 10 + Math.sin(a) * d * 0.9, 1.3); ctx.fill(); }
   }
-  // 洞＋旗子（旗子跟著風飄）
-  const hx = H0.hole, hy = golfGround(H0, hx), fd = g.wind < 0 ? -1 : 1, wa = Math.abs(g.wind), fl = 18 + wa * 16, droop = (1 - wa) * 9;
+  if (golfWet(g)) { ctx.strokeStyle = 'rgba(220,235,255,.7)'; ctx.lineWidth = 1; for (let k = 0; k < 10; k++) { const ph = ((FC + k * 9) % 24) / 24, sx2 = cam + (hsh(k * 71 + Math.floor((FC + k * 9) / 24) * 13) % 1000) / 1000 * vw, sy2 = golfGround(H0, sx2) + 2;   // 地上的雨滴
+    ctx.globalAlpha = 1 - ph; ell(sx2, sy2, 1.5 + ph * 7, 0.6 + ph * 2); ctx.stroke(); } ctx.globalAlpha = 1; }
+  const hx = H0.hole, hy = golfGround(H0, hx), fd = g.wind < 0 ? -1 : 1, wa = Math.min(1, Math.abs(g.wind)), storm = Math.abs(g.wind) > 1.2, fl = 18 + wa * 16, droop = (1 - wa) * 9;   // 洞＋旗子（旗子跟著風飄）
   ctx.fillStyle = 'rgba(10,40,5,.25)'; ctx.beginPath(); ctx.moveTo(hx, hy + 1); ctx.lineTo(hx + 52, hy + 7); ctx.lineTo(hx + 56, hy + 9); ctx.lineTo(hx, hy + 3); ctx.fill();
   ctx.fillStyle = '#121212'; ell(hx, hy + 1.5, 8.5, 3); ctx.fill();
   ctx.strokeStyle = '#f5f5f5'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.ellipse(hx, hy + 1.5, 8.5, 3, 0, Math.PI, Math.PI * 2); ctx.stroke();
+  ctx.save(); if (storm) { ctx.translate(hx, hy); ctx.rotate(fd * (0.14 + 0.08 * Math.sin(FC * 0.7))); ctx.translate(-hx, -hy); }   // 颱風：旗桿快被吹斷
   ctx.fillStyle = '#e0e0e0'; ctx.fillRect(hx - 1.6, hy - 80, 3.2, 81); ctx.fillStyle = '#fff'; ctx.fillRect(hx - 1.6, hy - 80, 1.4, 81);
   ctx.fillStyle = '#ffd54f'; circ(hx, hy - 81, 2.6); ctx.fill();
-  const top = hy - 78, w1 = Math.sin(FC * (0.1 + wa * 0.12)) * (2 + wa * 3), w2 = Math.sin(FC * (0.1 + wa * 0.12) + 1.6) * (2 + wa * 3);
+  const wf = storm ? 2.4 : 1, top = hy - 78, w1 = Math.sin(FC * (0.1 + wa * 0.12) * wf) * (2 + wa * 3) * wf, w2 = Math.sin(FC * (0.1 + wa * 0.12) * wf + 1.6) * (2 + wa * 3) * wf;
   ctx.fillStyle = '#e53935'; ctx.beginPath(); ctx.moveTo(hx, top);
   ctx.quadraticCurveTo(hx + fd * fl * 0.5, top + w1 + droop * 0.3, hx + fd * fl, top + droop + w2);
   ctx.lineTo(hx + fd * fl, top + 20 + droop * 1.2 + w2);
   ctx.quadraticCurveTo(hx + fd * fl * 0.5, top + 20 + w1 + droop * 0.5, hx, top + 21); ctx.closePath(); ctx.fill();
   ctx.fillStyle = 'rgba(0,0,0,.16)'; ctx.beginPath(); ctx.moveTo(hx + fd * fl * 0.45, top + w1 * 0.5 + droop * 0.25); ctx.quadraticCurveTo(hx + fd * fl * 0.6, top + 11, hx + fd * fl * 0.45, top + 20 + w1 * 0.5 + droop * 0.4); ctx.lineTo(hx + fd * fl * 0.3, top + 20.5); ctx.lineTo(hx + fd * fl * 0.3, top + 1); ctx.fill();
-  txt(String(g.hole + 1), hx + fd * fl * 0.5, top + 15 + droop * 0.5, 10, '#fff', 'center');
+  txt(g.daily ? '★' : String(g.hole + 1), hx + fd * fl * 0.5, top + 15 + droop * 0.5, 10, '#fff', 'center');
+  ctx.restore();
 }
 function drawGolfFinish(g) {                                 // 暈影＋黃昏色調
-  const L = GOLF_LOOK[g.hole] || GOLF_LOOK[0];
+  const L = golfLook(g);
+  if (golfWet(g)) { ctx.fillStyle = 'rgba(30,50,80,.16)'; ctx.fillRect(0, 0, W, H); }
   if (L.tint) { ctx.fillStyle = L.tint; ctx.fillRect(0, 0, W, H); }
   const v = ctx.createRadialGradient(W / 2, H * 0.55, H * 0.45, W / 2, H * 0.55, W * 0.72); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,10,20,.28)');
   ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
@@ -6142,26 +6424,30 @@ function golfBall(H0, x, y, yellow) {                         // 有陰影、有
   ctx.fillStyle = bg; circ(x, y, 5); ctx.fill();
   ctx.fillStyle = 'rgba(0,0,0,.13)'; for (const [dx, dy] of [[1.6, 1.2], [-1.1, 2.2], [2.6, -1], [-2.4, 0], [0.5, -2.7], [0.2, 0.3]]) { circ(x + dx, y + dy, 0.55); ctx.fill(); }
 }
-function golfTrail(g, key, b, col) {                          // 轉播用的白色彈道線
+function golfTrail(g, key, b, col) {                          // 轉播用的彈道線
   const k = 'tr' + key, tr = g[k] || (g[k] = []), l = tr[tr.length - 1];
   if (l && Math.hypot(l[0] - b.x, l[1] - b.y) > 90) tr.length = 0;
   if (b.rest) { if (tr.length) tr.splice(0, Math.max(1, tr.length >> 3)); }
-  else if (!l || Math.hypot(l[0] - b.x, l[1] - b.y) > 4) { tr.push([b.x, b.y]); if (tr.length > 70) tr.shift(); }
+  else if (!l || Math.hypot(l[0] - b.x, l[1] - b.y) > 4) { tr.push([b.x, b.y]); if (tr.length > 90) tr.shift(); }
   for (let i = 1; i < tr.length; i++) { ctx.strokeStyle = `rgba(${col},${(i / tr.length) * 0.6})`; ctx.lineWidth = 0.8 + 2.2 * i / tr.length; ctx.beginPath(); ctx.moveTo(tr[i - 1][0], tr[i - 1][1]); ctx.lineTo(tr[i][0], tr[i][1]); ctx.stroke(); }
 }
-function drawGolfDurian(x, gy, s, mood, club) {               // 老闆：小短腿＋高爾夫遮陽帽
+function drawGolfDurian(x, gy, s, mood, club, bald) {         // 老闆：小短腿＋高爾夫遮陽帽（颱風天會變禿頭）
   ctx.fillStyle = 'rgba(0,30,0,.25)'; ell(x, gy + 1, 70 * s, 12 * s); ctx.fill();
   ctx.strokeStyle = '#5d4037'; ctx.lineWidth = Math.max(2, 9 * s); ctx.beginPath(); ctx.moveTo(x - 22 * s, gy - 30 * s); ctx.lineTo(x - 24 * s, gy - 2); ctx.moveTo(x + 18 * s, gy - 30 * s); ctx.lineTo(x + 20 * s, gy - 2); ctx.stroke();
   ctx.fillStyle = '#fafafa'; ell(x - 28 * s, gy - 2, 12 * s, 5 * s); ctx.fill(); ell(x + 26 * s, gy - 2, 12 * s, 5 * s); ctx.fill();
   const y = gy - 28 * s - 76 * s;
   if (club) { ctx.strokeStyle = '#b0bec5'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + 50 * s, y + 20 * s); ctx.lineTo(x + 92 * s, gy - 2); ctx.stroke(); ctx.fillStyle = '#37474f'; ell(x + 96 * s, gy - 2, 12 * s, 6 * s); ctx.fill(); }
   drawDurian(x, y, s, mood);
-  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(x + 14 * s, y - 70 * s, 64 * s, 15 * s, -0.08, 0, Math.PI * 2); ctx.fill();   // 遮陽帽
+  if (bald) { const bg = ctx.createRadialGradient(x - 14 * s, y - 70 * s, 2, x, y - 56 * s, 52 * s); bg.addColorStop(0, '#fffde7'); bg.addColorStop(1, '#c9c46a');
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.ellipse(x, y - 52 * s, 56 * s, 34 * s, 0, Math.PI, 0); ctx.fill(); ctx.fillStyle = 'rgba(255,255,255,.8)'; ell(x - 18 * s, y - 70 * s, 12 * s, 6 * s, -0.3); ctx.fill();
+    ctx.strokeStyle = '#4e342e'; ctx.lineWidth = Math.max(1, 3 * s); ctx.beginPath(); for (const dx of [-8, 0, 8]) { ctx.moveTo(x + dx * s, y - 84 * s); ctx.quadraticCurveTo(x + (dx + 10) * s, y - 104 * s + Math.sin(FC * 0.3 + dx) * 4 * s, x + (dx + 22) * s, y - 98 * s); } ctx.stroke(); return; }
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(x + 14 * s, y - 70 * s, 64 * s, 15 * s, -0.08, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#fafafa'; rr(x - 44 * s, y - 112 * s, 86 * s, 44 * s, 30 * s); ctx.fill();
   ctx.fillStyle = '#c62828'; ctx.fillRect(x - 44 * s, y - 86 * s, 86 * s, 9 * s);
   ctx.fillStyle = '#c62828'; circ(x - 1 * s, y - 112 * s, 6 * s); ctx.fill();
 }
-function drawCaddie(x, gy) {                                  // 桿弟：一顆橘子＋球袋
+function drawCaddie(x, gy, face = 1) {                         // 桿弟：一顆橘子＋球袋
+  ctx.save(); ctx.translate(x, 0); ctx.scale(face, 1); ctx.translate(-x, 0);
   ctx.fillStyle = 'rgba(0,30,0,.25)'; ell(x - 8, gy + 1, 26, 4); ctx.fill();
   ctx.save(); ctx.translate(x - 24, gy); ctx.rotate(-0.16);
   for (const [dx, c] of [[-4.5, '#c62828'], [0, '#eceff1'], [4.5, '#2e7d32']]) { ctx.strokeStyle = '#b0bec5'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(dx, -38); ctx.lineTo(dx, -48); ctx.stroke(); ctx.fillStyle = c; ell(dx, -51, 3.4, 4.4); ctx.fill(); }
@@ -6177,12 +6463,761 @@ function drawCaddie(x, gy) {                                  // 桿弟：一顆
   const og = ctx.createRadialGradient(x - 5, by - 6, 2, x, by, 16); og.addColorStop(0, '#ffcc80'); og.addColorStop(0.5, '#ffa726'); og.addColorStop(1, '#e65100');
   ctx.fillStyle = og; circ(x, by, 14); ctx.fill();
   ctx.fillStyle = 'rgba(160,70,0,.25)'; for (let i = 0; i < 9; i++) { circ(x - 9 + gR(i, 71) * 18, by - 9 + gR(i, 72) * 18, 0.8); ctx.fill(); }
-  ctx.fillStyle = '#fff'; rr(x - 9, by + 1, 18, 11, 3); ctx.fill(); txt('07', x, by + 10, 8, '#1565c0', 'center');
+  ctx.fillStyle = '#fff'; rr(x - 9, by + 1, 18, 11, 3); ctx.fill();
+  ctx.save(); ctx.translate(x, 0); ctx.scale(face, 1); ctx.translate(-x, 0); txt('07', x, by + 10, 8, '#1565c0', 'center'); ctx.restore();
   ctx.fillStyle = '#3e2723'; circ(x - 4, by - 4, 1.6); ctx.fill(); circ(x + 4, by - 4, 1.6); ctx.fill();
   ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, by - 2, 3, 0.2, Math.PI - 0.2); ctx.stroke();
   ctx.fillStyle = 'rgba(255,120,120,.5)'; circ(x - 8, by - 1, 2); ctx.fill(); circ(x + 8, by - 1, 2); ctx.fill();
-  ctx.fillStyle = '#f5ecd2'; ell(x, by - 11, 20, 4.5); ctx.fill();                    // 大草帽
+  ctx.fillStyle = '#f5ecd2'; ell(x, by - 11, 20, 4.5); ctx.fill();
   ctx.fillStyle = '#fff8e1'; rr(x - 9, by - 22, 18, 12, 6); ctx.fill(); ctx.fillStyle = '#2e7d32'; ctx.fillRect(x - 9, by - 14, 18, 2.5);
+  ctx.restore();
+}
+
+// ---------- 高爾夫：追球鏡頭＋浮誇特效＋隨機搞笑片段 ----------
+const GOLF_GAGS = ['bird', 'drone', 'ufo', 'talk', 'matrix', 'caddie', 'line', 'tv'];
+const GOLF_GAG_TXT = {
+  bird: ['鳥：「你也是被叫來加班的嗎？」', '鳥：「這顆球飛得比我薪水還高」', '鳥：「借過借過！趕打卡！」'],
+  drone: ['公司無人機：「老闆，這是您要的報表」', '公司無人機：「順便提醒：週一要交週報」'],
+  ufo: ['外星人：「這顆不夠圓，不要。」', '外星人：「地球人週末也在上班？好可怕」'],
+  talk: ['球：「好高好高好高——」', '球：「我只是一顆球，為什麼要承受這些」', '球：「下輩子想當保齡球」', '球：「我有懼高症啊啊啊」'],
+  line: ['💬 老闆：這球記得算我的 👍', '💬 HR：請記得填加班單喔', '💬 媽媽：你什麼時候回家吃飯', '💬 同事：週一的會議改到早上七點'],
+  caddie: ['桿弟：「我去追！！」', '桿弟：「等等我——」'],
+};
+function golfHioNow(g) { return g.hio && g.me[g.hole] === 1; }
+function golfFlying(g) {
+  if (g.phase === 'fly' && !g.ball.rest) return { b: g.ball };
+  if (g.phase === 'boss' && g.bp && (g.bp.state === 'fly' || g.bp.state === 'kick')) return { b: g.bp.ball, boss: true };
+  if (g.phase === 'replay' && g.rp && g.rp.t >= 34 && !g.rp.end) return { b: g.ball, rp: true };
+  return null;
+}
+function golfView(g, H0) {                                   // 鏡頭目標：畫面中心看的世界座標＋縮放
+  const len = golfLen(H0), fl = golfFlying(g), fx = g.fx || {};
+  let x = golfCamTarget(g, H0) + W / 2, y = H * 0.45, z = 1;
+  if (g.phase === 'boss' && g.bp && g.bp.state === 'wig') { const t = g.bp.t, hd = golfWigHead(g, H0);     // 名場面鏡頭：頭→帽子→禿頭
+    if (t < 26) { x = hd.x; y = hd.y; z = 1.5 + t / 26 * 0.6; } else if (t < 86 && g.wig) { x = g.wig.x; y = g.wig.y; z = 1.75; } else { x = hd.x; y = hd.y - 4; z = 2.4; } }
+  else if (fl) { z = fx.slow > 0 || fl.rp ? 1.6 : fl.boss ? 1.18 : 1.34; x = fl.b.x + (fl.b.vx || 0) * 12; y = fl.b.y - 6; }        // 追球
+  else if (g.phase === 'replay') { z = 1.4; x = g.ball.x; y = g.ball.y - 30; }
+  else if ((g.phase === 'aim' || g.phase === 'power') && golfOnGreen(H0, g.ball.x)) { x = (g.ball.x + H0.hole) / 2; y = golfGround(H0, H0.hole) - 34; z = clamp(560 / (Math.abs(H0.hole - g.ball.x) + 170), 1.3, 2.1); }   // 推桿：看清楚果嶺
+  else if (g.phase === 'holed' && g.t < (golfHioNow(g) ? 170 : 55)) { z = 1.45; x = H0.hole; y = golfGround(H0, H0.hole) - 30; }             // 進洞特寫
+  const hw = W / 2 / z; x = clamp(x, hw, Math.max(hw, len - hw)); y = Math.min(y, H - H * 0.55 / z);
+  return { x, y, z };
+}
+function golfCamStep(g, H0) {
+  const v = golfView(g, H0), c = g.cv || (g.cv = { ...v }), fly = !!golfFlying(g);
+  const wig = g.phase === 'boss' && g.bp && g.bp.state === 'wig', k = wig ? 0.16 : fly ? 0.13 : 0.06; c.x += (v.x - c.x) * k; c.y += (v.y - c.y) * k; c.z += (v.z - c.z) * (wig ? 0.12 : fly ? 0.05 : 0.07);
+  g.cam = c.x - W / 2 / c.z;
+}
+function golfFxInit(g) { g.fx = { shake: 0, flash: 0, hit: 0, slow: 0, gag: null, txt: [], fire: false, stats: null, lastGag: g.fx && g.fx.lastGag, fw: 0, focus: 0 }; }
+function golfPop(g, s, x, y, o = {}) { (g.fx.txt = g.fx.txt || []).push({ s, x, y, t: 0, life: o.life || 70, size: o.size || 26, col: o.col || '#fff', burst: o.burst || null, screen: !!o.screen }); }
+function golfBurst(g, x, y, n, cols, o = {}) {
+  for (let i = 0; i < n && g.parts.length < 420; i++) {
+    const a = o.up ? -Math.PI / 2 + rand(-o.up, o.up) : rand(0, Math.PI * 2), sp = rand(o.min || 1, o.max || 5);
+    g.parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: o.life ? rand(o.life * 0.6, o.life) : rand(30, 55), c: pick(cols), r: o.r || rand(1.5, 3.5), gr: o.gr != null ? o.gr : 0.2, kind: o.kind || 'dot', rot: rand(0, 6), vr: rand(-0.3, 0.3), drag: o.drag || 0.99 });
+  }
+}
+function golfOnStrike(g, putt, power, boss) {                 // 擊球瞬間：停格＋閃光＋集中線
+  const fx = g.fx || golfFxInit(g) || g.fx, b = boss ? g.bp.ball : g.ball;
+  if (putt) { golfPop(g, pick(['叩。', '輕輕的…', '推！']), b.x, b.y - 24, { size: 16, life: 45 }); return; }
+  const p = power;
+  fx.hit = boss ? 4 : p >= 85 ? 10 : 6; fx.flash = boss ? 0.35 : p >= 85 ? 0.9 : 0.5; fx.shake = boss ? 4 : 4 + p / 100 * 10; fx.focus = boss ? 0 : 16;
+  golfBurst(g, b.x, b.y, boss ? 10 : 22, ['#fff', '#fff59d', '#ffeb3b'], { max: 7, gr: 0.05, kind: 'star', life: 30 });
+  golfBurst(g, b.x, b.y + 4, 10, ['#7cb342', '#8d6e63', '#aed581'], { up: 1.1, max: 4, gr: 0.25, life: 40 });   // 草皮飛起來
+  noise(0.25, 0.12); tone(1800, 0.25, 'sine', 0.05, 300, 0.02);                                         // 咻——
+  if (boss) { golfPop(g, pick(['老闆：「喝！」', '老闆：「看我的！」', '老闆：「這球穩了」']), b.x, b.y - 46, { size: 18, col: '#ffe082', life: 55 }); return; }
+  golfPop(g, p >= 92 ? '💥 全壘打？！（不同運動）' : p >= 75 ? 'NICE SHOT!!' : p >= 40 ? '好球！' : '……輕輕的', W / 2, 150, { size: p >= 75 ? 40 : 28, col: p >= 75 ? '#ffeb3b' : '#fff', burst: p >= 75 ? '#e53935' : null, screen: true, life: 60 });
+  fx.fire = p >= 90;
+  if (fx.fire) { golfPop(g, '🔥 燃燒吧！社畜之魂！！', W / 2, 196, { size: 22, col: '#ffccbc', screen: true, life: 90 }); tone(90, 0.6, 'sawtooth', 0.12, 40); }
+  if (p >= 65) fx.stats = { spd: Math.round(95 + p * 0.9 + rand(-4, 4)), rpm: Math.round(2400 + rand(0, 1400)), fav: pick(['+1', '-1', '-2', '±0', '+0.5']), t: 0 };
+  if (Math.random() < 0.4) {                                    // 隨機搞笑片段（不影響球的路線）
+    let k = pick(GOLF_GAGS); if (k === fx.lastGag) k = pick(GOLF_GAGS);
+    fx.gag = { k, t: 0, s: GOLF_GAG_TXT[k] ? pick(GOLF_GAG_TXT[k]) : '', sx: rand(0, 1) }; fx.lastGag = k;
+  }
+}
+function golfLandFx(g, ev, b, H0, boss) {                     // 落地、沙坑、水、樹、進洞的特效
+  const fx = g.fx; if (!fx) return;
+  const sp = Math.hypot(b.vx || 0, b.vy || 0);
+  if (ev === 'bounce') { const on = golfOnGreen(H0, b.x); golfBurst(g, b.x, b.y + 4, Math.min(16, 4 + sp * 2), on ? ['#c5e1a5', '#9ccc65'] : ['#7cb342', '#8d6e63', '#aed581'], { up: 0.9, max: 1 + sp * 0.6, life: 35 }); fx.shake = Math.max(fx.shake, Math.min(6, sp * 1.2));
+    if (sp > 2.2 && !boss) golfPop(g, on ? '啵！' : pick(['咚！', '碰！', '彈～']), b.x, b.y - 20, { size: 18, life: 35 }); SFX.bump(); }
+  if (ev === 'spinback') { golfBurst(g, b.x, b.y + 4, 12, ['#80deea', '#e0f7fa', '#7cb342'], { up: 0.9, max: 3, life: 35 }); golfPop(g, boss ? '老闆的球…倒退嚕？' : '倒退嚕～ ↩️', b.x, b.y - 26, { size: 22, col: '#b2ebf2', life: 60 }); tone(700, 0.25, 'square', 0.06, 300); fx.shake = 3; }
+  if (ev === 'spintop') { golfBurst(g, b.x, b.y + 4, 12, ['#ffb74d', '#7cb342'], { up: 0.9, max: 3, life: 35 }); golfPop(g, '衝啊！ ⏩', b.x, b.y - 26, { size: 22, col: '#ffe0b2', life: 55 }); tone(300, 0.2, 'square', 0.06, 700); }
+  if (ev === 'flop') { golfBurst(g, b.x, b.y + 4, 8, ['#f8bbd0', '#aed581'], { up: 0.9, max: 2, life: 30 }); golfPop(g, '軟著陸～ 🎈', b.x, b.y - 26, { size: 20, col: '#fce4ec', life: 55 }); tone(500, 0.15, 'sine', 0.08, 400); }
+  if (ev === 'skip') { golfBurst(g, b.x, b.y, 14, ['#e1f5fe', '#81d4fa', '#fff'], { up: 0.7, min: 1, max: 4, gr: 0.2, life: 30 }); golfPop(g, `啪！×${b.skips}`, b.x, b.y - 28, { size: b.skips >= 3 ? 24 : 18, col: '#e1f5fe', burst: b.skips >= 3 ? '#0277bd' : null, life: 38 }); tone(900 + b.skips * 200, 0.08, 'sine', 0.1); fx.shake = 3;
+    if (b.skips >= 3 && !boss) golfPop(g, '（魚群起立鼓掌）', W / 2, 250, { size: 15, screen: true, life: 90 }); }
+  if (ev === 'sand') { golfBurst(g, b.x, b.y + 3, 26, ['#f7e7b4', '#e8d08f', '#d6b871'], { up: 1.2, max: 5, life: 50 }); fx.shake = 6; golfPop(g, '噗沙！', b.x, b.y - 26, { size: 24, col: '#fff3c4', life: 55 }); noise(0.3, 0.2);
+    if (!boss && Math.random() < 0.5) golfPop(g, pick(['（球：「好燙！海邊嗎？」）', '（桿弟默默去拿耙子）']), W / 2, 230, { size: 15, screen: true, life: 90 }); }
+  if (ev === 'water') { const wy = H0.water[2]; golfBurst(g, b.x, wy, 40, ['#81d4fa', '#e1f5fe', '#4fc3f7', '#fff'], { up: 0.5, min: 3, max: 9, gr: 0.3, life: 55 }); fx.shake = 9; fx.flash = 0.25;
+    golfPop(g, '噗通！！', b.x, wy - 40, { size: 34, col: '#e1f5fe', burst: '#0277bd', life: 70 });
+    if (Math.random() < 0.45) golfPop(g, pick(['🐟 魚：「謝謝老闆加菜」', '🦆 鴨子：「又來一顆？」', '🐢 烏龜默默把球收藏起來']), W / 2, 236, { size: 16, screen: true, life: 110 }); }
+  if (ev === 'tree') { golfBurst(g, b.x, b.y, 18, ['#2e7d32', '#43a047', '#66bb6a', '#9ccc65'], { max: 4, gr: 0.05, kind: 'leaf', life: 90, drag: 0.97 }); fx.shake = 7; golfPop(g, '咚！🌳', b.x, b.y - 30, { size: 26, life: 60 });
+    if (Math.random() < 0.5) golfBurst(g, b.x, b.y - 20, 2, ['#455a64'], { up: 0.6, min: 3, max: 4, gr: -0.02, kind: 'bird', life: 120, drag: 1 }); }
+  if (ev === 'oob') { fx.shake = 5; if (!boss) golfPop(g, pick(['（遠方傳來：「FORE——！」）', '（隔壁球場傳來慘叫）', '（球去追求自由了）']), W / 2, 236, { size: 16, screen: true, life: 110 }); }
+  if (ev === 'holed') {
+    const hx = H0.hole, hy = golfGround(H0, hx);
+    golfBurst(g, hx, hy - 6, boss ? 30 : 80, ['#e53935', '#fdd835', '#43a047', '#1e88e5', '#8e24aa', '#ff7043', '#fff'], { up: 0.9, min: 3, max: 10, gr: 0.16, kind: 'conf', life: 110, drag: 0.985 });
+    fx.flash = boss ? 0.3 : 0.7; fx.shake = boss ? 4 : 10;
+    golfPop(g, boss ? '老闆進洞！（桿弟狂鼓掌）' : '進洞！！', boss ? W / 2 : hx, boss ? 160 : hy - 70, { size: boss ? 22 : 46, col: '#fff59d', burst: boss ? null : '#2e7d32', screen: boss, life: 70 });
+  }
+}
+function golfFxStep(g, H0) {                                  // 每格：特效計時、火焰、搞笑片段、煙火
+  const fx = g.fx; if (!fx) return;
+  if (fx.shake > 0) fx.shake *= 0.86; if (fx.shake < 0.2) fx.shake = 0;
+  if (fx.flash > 0) fx.flash = Math.max(0, fx.flash - 0.06); if (fx.focus > 0) fx.focus--;
+  if (fx.slow > 0) fx.slow--;
+  for (const t of fx.txt) t.t++; fx.txt = fx.txt.filter(t => t.t < t.life);
+  if (fx.stats) { fx.stats.t++; if (fx.stats.t > 200) fx.stats = null; }
+  if (g.wig) golfWigMove(g);
+  if (g.wx === 'wind' && FC % 4 === 0 && g.parts.length < 300 && g.cv) {                              // 颱風：葉子、文件滿天飛
+    const z = g.cv.z, left = g.cv.x - W / 2 / z, top = g.cv.y - H * 0.45 / z;
+    g.parts.push({ x: g.wind > 0 ? left - 20 : left + W / z + 20, y: top + rand(20, H / z * 0.85), vx: g.wind * rand(3.5, 6.5), vy: rand(-0.6, 0.6), life: 240, c: pick(['#689f38', '#8bc34a', '#a1887f', '#c5e1a5']), r: rand(2, 3.5), gr: 0.01, kind: Math.random() < 0.12 ? 'paper' : 'leaf', rot: rand(0, 6), vr: rand(-0.3, 0.3), drag: 1 });
+  }
+  const b = g.ball, fly = g.phase === 'fly' && !b.rest;
+  if (fx.fire && fly && g.parts.length < 420) for (let i = 0; i < 3; i++) g.parts.push({ x: b.x + rand(-2, 2), y: b.y + rand(-2, 2), vx: -b.vx * 0.15 + rand(-0.5, 0.5), vy: -b.vy * 0.15 + rand(-0.8, 0), life: rand(14, 26), c: pick(['#ffeb3b', '#ff9800', '#ff5722', '#fff176']), r: rand(2, 4.5), gr: -0.04, kind: 'fire', drag: 0.95 });
+  if (!fly) fx.fire = false;
+  const gg = fx.gag;
+  if (gg) { gg.t++;
+    if (gg.k === 'matrix' && gg.t === 22 && fly) { fx.slow = 110; tone(220, 1.2, 'sine', 0.12, 110); golfPop(g, '⏱ 子 彈 時 間', W / 2, 150, { size: 30, col: '#b2ff59', screen: true, life: 110 }); }
+    if (gg.k === 'ufo' && gg.t === 10) tone(600, 0.8, 'sine', 0.06, 1400);
+    if (gg.k === 'line' && gg.t === 8) { tone(1175, 0.08, 'sine', 0.1); tone(1568, 0.1, 'sine', 0.1, 0, 0.09); }
+    if (gg.t > 170 || (!fly && gg.t > 40 && gg.k !== 'line' && gg.k !== 'tv')) fx.gag = null;
+  }
+  if (fx.fw > 0) { fx.fw--; if (fx.fw % 18 === 0) { const x = H0.hole + rand(-260, 260), y = golfGround(H0, H0.hole) - rand(140, 260); golfBurst(g, x, y, 36, pick([['#ff5252', '#ffeb3b'], ['#40c4ff', '#fff'], ['#b2ff59', '#ffd740'], ['#ea80fc', '#fff']]), { min: 2, max: 6, gr: 0.06, kind: 'star', life: 60, drag: 0.97 }); noise(0.2, 0.08); tone(rand(300, 600), 0.2, 'triangle', 0.06, 80); } }
+}
+function golfDrawParts(g) {
+  for (const p of g.parts) {
+    const a = clamp(p.life / 30, 0, 1); ctx.globalAlpha = a; ctx.fillStyle = p.c; const r = p.r || 3;
+    if (p.kind === 'conf') { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillRect(-r, -r * 0.5, r * 2, r); ctx.restore(); }
+    else if (p.kind === 'leaf') { ell(p.x, p.y, r * 1.4, r * 0.7, p.rot); ctx.fill(); }
+    else if (p.kind === 'star') { ctx.beginPath(); ctx.moveTo(p.x, p.y - r * 1.6); ctx.lineTo(p.x + r * 0.45, p.y); ctx.lineTo(p.x, p.y + r * 1.6); ctx.lineTo(p.x - r * 0.45, p.y); ctx.closePath(); ctx.moveTo(p.x - r * 1.6, p.y); ctx.lineTo(p.x, p.y - r * 0.45); ctx.lineTo(p.x + r * 1.6, p.y); ctx.lineTo(p.x, p.y + r * 0.45); ctx.fill(); }
+    else if (p.kind === 'bird') { ctx.strokeStyle = p.c; ctx.lineWidth = 1.6; const f = Math.sin(FC * 0.5 + p.rot) * 3; ctx.beginPath(); ctx.moveTo(p.x - 6, p.y - 2 - f); ctx.quadraticCurveTo(p.x - 3, p.y - 3, p.x, p.y); ctx.quadraticCurveTo(p.x + 3, p.y - 3, p.x + 6, p.y - 2 - f); ctx.stroke(); }
+    else if (p.kind === 'paper') { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = '#fafafa'; ctx.fillRect(-7, -9, 14, 18); ctx.fillStyle = '#90a4ae'; for (let k = 0; k < 4; k++) ctx.fillRect(-5, -6 + k * 4, 10, 1); ctx.restore(); }
+    else if (p.kind === 'fire') { ctx.globalAlpha = a * 0.85; circ(p.x, p.y, r * (0.5 + a * 0.6)); ctx.fill(); }
+    else { circ(p.x, p.y, r); ctx.fill(); }
+  }
+  ctx.globalAlpha = 1;
+}
+function golfUpdParts(g) {
+  for (const p of g.parts) { p.x += p.vx; p.y += p.vy; p.vy += p.gr != null ? p.gr : 0.25; if (p.drag) { p.vx *= p.drag; p.vy *= p.kind === 'leaf' ? 0.97 : 1; } if (p.vr) p.rot += p.vr; if (p.kind === 'leaf') p.vx += Math.sin(FC * 0.1 + p.rot) * 0.05; p.life--; }
+  g.parts = g.parts.filter(p => p.life > 0);
+}
+function drawGolfGagWorld(g, H0) {                            // 搞笑片段（跟著球、在世界座標裡）
+  const gg = g.fx && g.fx.gag; if (!gg) return;
+  const b = g.ball, t = gg.t, fly = g.phase === 'fly';
+  if (gg.k === 'bird' && t > 6) { const x = b.x - 26 * (g.dir || 1), y = b.y - 22 + Math.sin(t * 0.3) * 4, f = Math.sin(t * 0.6) * 6;
+    ctx.fillStyle = '#546e7a'; ell(x, y, 9, 5); ctx.fill(); ctx.fillStyle = '#ffb300'; ctx.beginPath(); ctx.moveTo(x + 9 * (g.dir || 1), y - 1); ctx.lineTo(x + 14 * (g.dir || 1), y); ctx.lineTo(x + 9 * (g.dir || 1), y + 2); ctx.fill();
+    ctx.fillStyle = '#37474f'; ctx.beginPath(); ctx.moveTo(x - 2, y); ctx.lineTo(x - 8, y - 9 - f); ctx.lineTo(x + 4, y - 1); ctx.fill(); ctx.fillStyle = '#fff'; circ(x + 5 * (g.dir || 1), y - 2, 1.6); ctx.fill(); }
+  if (gg.k === 'ufo' && t > 8 && t < 140) { const k = t < 30 ? (30 - t) * 8 : t > 110 ? (t - 110) * -12 : 0, x = b.x + (t > 110 ? (t - 110) * 14 : 0), y = b.y - 90 - k * 0.5;
+    if (t > 30 && t < 110 && fly) { const bg = ctx.createLinearGradient(0, y, 0, b.y); bg.addColorStop(0, 'rgba(178,255,89,.55)'); bg.addColorStop(1, 'rgba(178,255,89,.05)'); ctx.fillStyle = bg; ctx.beginPath(); ctx.moveTo(x - 8, y + 6); ctx.lineTo(x + 8, y + 6); ctx.lineTo(b.x + 22, b.y + 8); ctx.lineTo(b.x - 22, b.y + 8); ctx.fill(); }
+    ctx.fillStyle = '#b0bec5'; ell(x, y, 30, 8); ctx.fill(); ctx.fillStyle = 'rgba(178,235,242,.9)'; ctx.beginPath(); ctx.ellipse(x, y - 4, 13, 10, 0, Math.PI, 0); ctx.fill();
+    for (let i = -2; i <= 2; i++) { ctx.fillStyle = (FC >> 3) % 2 === (i & 1) ? '#ffeb3b' : '#ff5252'; circ(x + i * 11, y + 2, 2); ctx.fill(); } }
+  if (gg.k === 'talk' && fly && t > 10 && t < 130) txt('😵', b.x, b.y - 14, 14, '#fff', 'center');
+}
+function drawGolfFxScreen(g, H0, toS) {                       // 螢幕上的浮誇效果：速度線、集中線、子彈時間、通知、轉播字卡
+  const fx = g.fx; if (!fx) return;
+  drawGolfWxScreen(g, toS);
+  const fl = golfFlying(g);
+  if (fl) { const b = fl.b, sp = Math.hypot(b.vx || 0, b.vy || 0); if (sp > 3.5) {            // 速度線
+    const [bx, by] = toS(b.x, b.y), ang = Math.atan2(b.vy, b.vx), n = Math.min(26, Math.floor(sp * 2.2)), L = sp * 14;
+    ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1.6; ctx.beginPath();
+    for (let i = 0; i < n; i++) { const r1 = (hsh(i * 31 + FC * 7) % 1000) / 1000, r2 = (hsh(i * 57 + FC * 13) % 1000) / 1000, px = r1 * W, py = 60 + r2 * (H - 120); if (Math.hypot(px - bx, py - by) < 50) continue;
+      ctx.moveTo(px, py); ctx.lineTo(px - Math.cos(ang) * L, py - Math.sin(ang) * L); }
+    ctx.stroke(); } }
+  if (fx.focus > 0) { const [bx, by] = toS(g.ball.x, g.ball.y); ctx.fillStyle = `rgba(20,20,30,${fx.focus / 16 * 0.55})`; ctx.beginPath();   // 漫畫集中線
+    for (let i = 0; i < 48; i++) { const a = i / 48 * Math.PI * 2 + (hsh(i + FC) % 100) / 900, r0 = 90 + (hsh(i * 7) % 60), r1 = 800; ctx.moveTo(bx + Math.cos(a) * r0, by + Math.sin(a) * r0); ctx.lineTo(bx + Math.cos(a + 0.025) * r1, by + Math.sin(a + 0.025) * r1); ctx.lineTo(bx + Math.cos(a - 0.025) * r1, by + Math.sin(a - 0.025) * r1); }
+    ctx.fill(); }
+  if (fx.slow > 0) { const k = Math.min(1, Math.min(fx.slow, 110 - fx.slow) / 12); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, 46 * k); ctx.fillRect(0, H - 46 * k, W, 46 * k);
+    ctx.fillStyle = `rgba(80,255,120,${0.06 * k})`; ctx.fillRect(0, 0, W, H); }
+  const gg = fx.gag;
+  if (gg) { const t = gg.t, b = g.ball, [bx, by] = toS(b.x, b.y);
+    const bubble = (s, x, y) => { ctx.font = `bold 14px ${FONT}`; const w = ctx.measureText(s).width + 22; x = clamp(x, 10 + w / 2, W - 10 - w / 2); y = clamp(y, 70, H - 90);
+      ctx.fillStyle = 'rgba(255,255,255,.95)'; rr(x - w / 2, y - 16, w, 28, 12); ctx.fill(); txt(s, x, y + 3, 14, '#3e2723', 'center'); };
+    if ((gg.k === 'bird' || gg.k === 'talk' || gg.k === 'ufo') && t > 24 && t < 150) bubble(gg.s, bx, by - 58);
+    if (gg.k === 'drone' && t < 170) { const x = W + 60 - t * 7.5, y = 120 + Math.sin(t * 0.1) * 8;
+      ctx.strokeStyle = '#37474f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 18, y); ctx.lineTo(x + 18, y); ctx.stroke(); ctx.fillStyle = '#455a64'; rr(x - 8, y - 4, 16, 8, 3); ctx.fill();
+      for (const dx of [-18, 18]) { ctx.fillStyle = 'rgba(120,144,156,.6)'; ell(x + dx, y - 4, 9 + Math.sin(FC) * 3, 2); ctx.fill(); }
+      ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y + 4); ctx.lineTo(x, y + 18); ctx.stroke(); ctx.fillStyle = '#fff'; ctx.fillRect(x - 7, y + 18, 14, 17); ctx.fillStyle = '#90a4ae'; for (let i = 0; i < 4; i++) ctx.fillRect(x - 5, y + 21 + i * 3.5, 10, 1);
+      if (t > 15 && t < 150) bubble(gg.s, x, y + 54); }
+    if (gg.k === 'caddie' && t < 170) { const x = -30 + t * 6.5, y = H - 34, legs = Math.sin(t * 0.8) * 5;
+      ctx.strokeStyle = '#4e342e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x - 3, y + 8); ctx.lineTo(x - 3 - legs, y + 20); ctx.moveTo(x + 3, y + 8); ctx.lineTo(x + 3 + legs, y + 20); ctx.stroke();
+      const og = ctx.createRadialGradient(x - 4, y - 4, 2, x, y, 14); og.addColorStop(0, '#ffcc80'); og.addColorStop(1, '#e65100'); ctx.fillStyle = og; circ(x, y, 12); ctx.fill();
+      ctx.fillStyle = '#f5ecd2'; ell(x, y - 10, 17, 4); ctx.fill(); ctx.fillStyle = '#3e2723'; circ(x + 4, y - 3, 1.5); ctx.fill(); circ(x + 9, y - 3, 1.5); ctx.fill();
+      ctx.fillStyle = 'rgba(210,190,150,.6)'; for (let i = 0; i < 4; i++) { circ(x - 16 - i * 9, y + 18 - (i % 2) * 3, 5 - i); ctx.fill(); }
+      txt('💦', x - 12, y - 14, 12, '#fff', 'center'); if (t > 10 && t < 140) bubble(gg.s, x + 40, y - 40); }
+    if (gg.k === 'line' && t < 190) { const k = t < 14 ? t / 14 : t > 170 ? (190 - t) / 20 : 1, y = -60 + k * 122, X = W / 2 + 70;
+      ctx.fillStyle = 'rgba(250,250,250,.97)'; rr(X - 200, y, 400, 52, 14); ctx.fill(); ctx.fillStyle = '#06c755'; rr(X - 188, y + 10, 32, 32, 8); ctx.fill(); txt('💬', X - 172, y + 32, 16, '#fff', 'center');
+      txt('通知・剛剛', X - 146, y + 20, 11, '#9e9e9e', 'left', { weight: 'normal' }); txt(gg.s.replace('💬 ', ''), X - 146, y + 40, 14, '#212121', 'left'); }
+    if (gg.k === 'tv' && t < 200) { ctx.fillStyle = '#c62828'; rr(W - 196, 62, 176, 26, 6); ctx.fill(); txt('🔴 LIVE 轉播中', W - 108, 80, 13, '#fff', 'center');
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; rr(W - 196, 90, 176, 22, 6); ctx.fill(); txt('觀眾 3 人（含老闆）', W - 108, 106, 12, '#fff', 'center', { weight: 'normal' }); }
+  }
+  if (fx.stats && fx.stats.t < 200) { const s = fx.stats, k = Math.min(1, s.t / 12, (200 - s.t) / 12), x = -300 + k * 316, y = H - 112;     // 轉播字卡
+    ctx.fillStyle = 'rgba(13,71,161,.88)'; rr(x, y, 290, 50, 6); ctx.fill(); ctx.fillStyle = '#ffd54f'; ctx.fillRect(x, y, 6, 50);
+    txt(`球速 ${s.spd} km/h｜轉速 ${s.rpm} rpm`, x + 16, y + 21, 14, '#fff');
+    txt(`老闆好感度 ${s.fav}｜今日加班時數 不變`, x + 16, y + 41, 12, '#bbdefb', 'left', { weight: 'normal' }); }
+  golfDrawPops(g, toS);                                         // 跳出來的大字
+  if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${fx.flash * 0.7})`; ctx.fillRect(0, 0, W, H); }
+}
+
+// ---------- 高爾夫：球場（一般 5 洞／每日一洞）、多個沙坑和樹 ----------
+function GH() { return (G.golf && G.golf.course) || GOLF_HOLES; }
+function golfSands(H0) { return H0.sands || (H0.sand ? [H0.sand] : []); }
+function golfTrees(H0) { return H0.trees || (H0.tree ? [H0.tree] : []); }
+function golfInSand(H0, x) { const S = golfSands(H0); for (let i = 0; i < S.length; i++) if (x > S[i][0] && x < S[i][1]) return true; return false; }
+function golfLook(g) { const h = GH()[g.hole]; return GOLF_LOOK[((h && h.look != null) ? h.look : g.hole) % GOLF_LOOK.length]; }
+function golfWet(g) { return !!g && (g.wx === 'rain' || g.wx === 'storm'); }
+// ---------- 天氣：下雨、颱風、午後雷陣雨 ----------
+const GOLF_WX = {
+  rain: { icon: '🌧️', name: '下雨', intro: '🌧️ 下雨了：球會滾得比較慢', sub: '☔（桿弟幫老闆撐傘…你自己淋雨）' },
+  wind: { icon: '🌀', name: '颱風', intro: '🌀 颱風天：風超大，旗子快斷了', sub: '（老闆：「颱風假是給弱者放的」）' },
+  storm: { icon: '⛈️', name: '雷陣雨特報', intro: '⛈️ 午後雷陣雨特報', sub: '（老闆看起來好像很期待…）' },
+};
+function golfSetWeather(g) {
+  const C = GH(); g.wxs = C.map(h => h.wx || null);
+  if (g.course) return;
+  for (let i = 1; i < g.wxs.length; i++) { const r = Math.random(); g.wxs[i] = r < 0.2 ? 'rain' : r < 0.34 ? 'wind' : r < 0.44 ? 'storm' : null; }
+  let st = false; g.wxs = g.wxs.map(w => w === 'storm' ? (st ? 'rain' : (st = true, w)) : w);   // 雷陣雨一輪最多一次
+  if (!g.wxs.some(Boolean)) g.wxs[1 + Math.floor(Math.random() * (g.wxs.length - 1))] = pick(['rain', 'wind', 'storm']);
+}
+function golfStorm(g) {                                       // 雷陣雨：老闆宣布這洞不算，重打
+  g.stormHit = true; g.phase = 'storm'; g.t = 0; g.st = { t: 0, claim: g.claim[g.hole], me: g.strokes };
+  g.fx.flash = 1; g.fx.shake = 12; noise(1.4, 0.35); tone(55, 1.2, 'sawtooth', 0.2, 30); buzz(120);
+}
+function golfStormStep(g) {
+  const s = g.st; s.t++;
+  if (s.t === 50 || s.t === 95) { g.fx.flash = 1; g.fx.shake = 8; noise(0.9, 0.25); tone(48, 0.9, 'sawtooth', 0.16, 30); s.bolt = { x: rand(120, W - 120), t: 12, seed: Math.floor(rand(1, 999)) }; }
+  if (s.t === 1) s.bolt = { x: rand(120, W - 120), t: 14, seed: 7 };
+  if (s.bolt && --s.bolt.t <= 0) s.bolt = null;
+  if (s.t === 20) golfPop(g, '⚡ 午後雷陣雨！！', W / 2, 150, { size: 40, col: '#fff59d', burst: '#263238', screen: true, life: 200 });
+  if (s.t === 60) { golfPop(g, '老闆宣布：「雨天不算！這洞重打！」', W / 2, 220, { size: 22, screen: true, life: 160 }); chatter('durian', 5); }
+  if (s.t === 105) golfPop(g, s.me < s.claim ? `（你這洞本來快贏他了…他算得很清楚）` : `（老闆這洞自稱 ${s.claim} 桿，看起來是真的怕打雷）`, W / 2, 262, { size: 15, screen: true, life: 120 });
+  if (s.t >= 215) { g.wxs[g.hole] = 'rain'; g.stormed = (g.stormed || 0) + 1; golfStartHole(); golfPop(g, '🌦️ 雨變小了…重打這洞', W / 2, 200, { size: 22, screen: true, life: 140 }); }
+}
+function drawGolfWxScreen(g, toS) {                           // 雨絲、閃電
+  const wet = golfWet(g) || g.phase === 'storm';
+  if (wet) {
+    const n = g.wx === 'storm' || g.phase === 'storm' ? 150 : 85, wd = g.wind * 5;
+    ctx.strokeStyle = 'rgba(205,225,255,.45)'; ctx.lineWidth = 1.2; ctx.beginPath();
+    for (let i = 0; i < n; i++) { const sp = 11 + (hsh(i * 17) % 7), y = ((hsh(i * 131) % 1000) / 1000 * (H + 60) + FC * sp) % (H + 60) - 30, x = ((hsh(i * 977) % 1000) / 1000 * (W + 200) - 100 + y * g.wind * 0.3) % (W + 200);
+      ctx.moveTo(x, y); ctx.lineTo(x - wd - g.wind * 3, y - 16); }
+    ctx.stroke();
+  }
+  const s = g.st;
+  if (g.phase === 'storm' && s) {
+    ctx.fillStyle = 'rgba(10,15,35,.35)'; ctx.fillRect(0, 0, W, H);
+    if (s.bolt) { ctx.strokeStyle = '#fffde7'; ctx.lineWidth = 4; ctx.shadowColor = '#fff59d'; ctx.shadowBlur = 18; ctx.beginPath(); let x = s.bolt.x, y = 0; ctx.moveTo(x, y);
+      for (let k = 0; k < 9; k++) { x += ((hsh(s.bolt.seed * 31 + k) % 100) - 50) * 0.9; y += 46; ctx.lineTo(x, y); } ctx.stroke(); ctx.shadowBlur = 0; }
+  }
+}
+function drawUmbrella(cx, top, hx, hy) {                      // 桿弟幫老闆撐的傘
+  ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(cx, top); ctx.stroke();
+  const r = 30, cols = ['#e53935', '#fff', '#1e88e5', '#fff', '#fdd835', '#fff'];
+  for (let i = 0; i < 6; i++) { ctx.fillStyle = cols[i]; ctx.beginPath(); ctx.moveTo(cx, top - 4); ctx.arc(cx, top + 8, r, Math.PI + i * Math.PI / 6, Math.PI + (i + 1) * Math.PI / 6); ctx.closePath(); ctx.fill(); }
+  ctx.fillStyle = '#5d4037'; circ(cx, top - 6, 2.4); ctx.fill();
+  ctx.fillStyle = 'rgba(180,210,255,.8)'; for (let i = 0; i < 3; i++) { const dx = -r + 4 + ((FC * 0.7 + i * 23) % (r * 2 - 8)), dy = ((FC * 2 + i * 9) % 24); circ(cx + dx, top + 10 + dy, 1.4); ctx.fill(); }
+}
+function drawRainCloud(x, y) {                                // 阿葡頭上的小烏雲
+  ctx.fillStyle = '#78909c'; ctx.beginPath(); for (const [dx, dy, r] of [[-10, 2, 8], [0, -3, 10], [11, 1, 8]]) { ctx.moveTo(x + dx + r, y + dy); ctx.arc(x + dx, y + dy, r, 0, Math.PI * 2); } ctx.fill();
+  ctx.strokeStyle = 'rgba(130,180,255,.9)'; ctx.lineWidth = 1.4; ctx.beginPath();
+  for (let i = 0; i < 4; i++) { const yy = y + 10 + ((FC * 1.6 + i * 7) % 22); ctx.moveTo(x - 12 + i * 8, yy); ctx.lineTo(x - 13 + i * 8, yy + 5); } ctx.stroke();
+}
+function drawWig(w) {                                         // 飛走的帽子＋假髮
+  ctx.save(); ctx.translate(w.x, w.y); ctx.rotate(w.rot);
+  ctx.fillStyle = '#4e342e'; ctx.beginPath(); ctx.ellipse(0, 6, 22, 8, 0, 0, Math.PI); ctx.fill();
+  for (let i = -3; i <= 3; i++) { ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(i * 5, 8); ctx.quadraticCurveTo(i * 6 + 3, 16, i * 5 + 6, 14 + Math.sin(FC * 0.4 + i) * 2); ctx.stroke(); }
+  ctx.fillStyle = '#fff'; ell(4, 0, 24, 6); ctx.fill(); ctx.fillStyle = '#fafafa'; rr(-14, -14, 30, 14, 9); ctx.fill(); ctx.fillStyle = '#c62828'; ctx.fillRect(-14, -6, 30, 3);
+  ctx.restore();
+}
+// ---------- 重播精華（轉播風慢動作） ----------
+function golfHighlight(s) {                                   // 特殊球路有多精彩（0＝普通）
+  if (!s.spin || s.ev === 'water' || s.ev === 'oob') return 0;
+  const near = s.ev === 'holed' || s.endDist < 60;
+  if (s.ev === 'holed' && !s.putt) return 10;
+  if (s.spin === 'skim' && s.skips >= 2) return 8 + s.skips * 0.1;
+  if (s.spin === 'back' && s.back && near) return 8;
+  if (s.spin === 'flop' && s.onGreen) return 7;
+  if (s.spin === 'stinger' && Math.abs(s.wind) > 1.2 && s.gain > 250) return 6;
+  if (s.spin === 'top' && s.gain > 450) return 5;
+  if (s.gain > 0 && s.endDist < 120) return 4;
+  return 0;
+}
+function golfPickReplay(g) {
+  const S = (g.shots || []).filter(s => s.ev && !s.td); if (!S.length) return null;
+  const sev = s => s.ev === 'water' || s.ev === 'oob' ? 3 : s.tree ? 2 : s.sand ? 1.5 : s.gain < -20 ? 1 : 0;
+  const worst = S.slice().sort((a, b) => sev(b) - sev(a))[0], holed = S.find(s => s.ev === 'holed');
+  if (holed && S.length === 1) return { s: holed, best: true, hio: true };
+  const hl = S.map(s => [golfHighlight(s), s]).sort((a, b) => b[0] - a[0])[0];          // 特殊球路的精彩表現：優先重播
+  if (hl && hl[0] >= 4) return { s: hl[1], best: true, hl: hl[1].spin };
+  if (sev(worst) > 0 && (Math.random() < 0.6 || !holed)) return { s: worst, best: false };
+  const best = holed && holed.from > 110 ? holed : S.filter(s => !s.putt || s.ev === 'holed').sort((a, b) => b.gain - a.gain)[0] || S[0];
+  return { s: best, best: true };
+}
+function golfReplayLine(rp) {
+  const s = rp.s;
+  if (!rp.best) {
+    if (s.ev === 'water') return pick(['這球…我們先進廣告。', '球評：「水很涼，球很開心。」', '球評：「這是…戰術性下水。」']);
+    if (s.ev === 'oob') return pick(['球評：「這顆球，選擇了自由。」', '球評：「它去找更好的工作了。」']);
+    if (s.tree) return pick(['樹：「我也有 KPI 要顧。」', '球評：「這棵樹今天表現比選手還好。」']);
+    if (s.sand) return pick(['球評：「歡迎來到海灘度假村。」', '球評：「至少沙子很軟。」']);
+    return pick(['球評：「嗯…這球很有…個人風格。」', '球評：「我們尊重每一種打法。」']);
+  }
+  if (rp.hio) return '球評：「我在這行三十年…（哽咽）」';
+  if (rp.hl) { const nm = golfSpinInfo(rp.hl).name;
+    if (s.ev === 'holed') return `球評：「${nm}球直接進洞！！這球我要看十遍！」`;
+    return pick(({ back: ['球評：「看這逆旋！球自己走回來，比員工還聽話！」', '球評：「倒退嚕～這就是傳說中的咬住果嶺！」'],
+      skim: [`球評：「${s.skips} 連水漂！魚群集體起立鼓掌！」`, '球評：「這不是高爾夫，這是物理課。」'],
+      flop: ['球評：「高吊軟著陸，比空降部隊還準！」', '球評：「飛那麼高還能停住…這是人類嗎？」'],
+      stinger: ['球評：「颱風天穿林低平球！風都追不上！」', '球評：「貼地飛行，比老闆的帽子穩多了。」'],
+      top: ['球評：「上旋球一路衝！比 KPI 還能衝！」', '球評：「落地還在加速…這球有在加班。」'] })[rp.hl] || ['球評：「這球路…我給滿分。」']); }
+  if (s.ev === 'holed') return pick(['球評：「這推桿，比年終獎金還準！」', '球評：「漂亮！老闆的臉色變了！」']);
+  return pick(['球評：「這一桿，連老闆都忘了講幹話。」', '球評：「這就是社畜的爆發力！」', '球評：「建議公司幫他加薪（不會）」']);
+}
+function golfReplayStart(g, H0) {
+  g.rpDone = true; g.msgT = 0; const pk = golfPickReplay(g); if (!pk) return false;
+  const s = pk.s, tb = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, rest: false, noTree: s.noTree, spin: s.spin || null };
+  let n = 0, ev = null; while (n < 6000 && !['water', 'oob', 'holed', 'rest'].includes(ev)) { ev = golfPhys(tb, H0, s.wind); n++; if (!ev && golfRollOnGreen(g, H0, tb)) break; }
+  g.rp = { s, best: pk.best, hio: !!pk.hio, hl: pk.hl || null, n, done: 0, acc: 0, t: 0, end: 0, save: { ball: g.ball, last: g.last, dir: g.dir, wind: g.wind } };
+  g.rp.line = golfReplayLine(g.rp);
+  g.ball = { x: s.x, y: s.y, vx: 0, vy: 0, rest: true, noTree: s.noTree, spin: s.spin || null }; g.last = { x: s.x, y: s.y }; g.dir = s.dir; g.wind = s.wind;
+  g.trp = []; g.parts = []; Object.assign(g.fx, { txt: [], gag: null, stats: null, fire: false, fw: 0, slow: 0 });
+  g.phase = 'replay'; g.t = 0; g.swing = 0;
+  for (let i = 0; i < 6; i++) tone(900 - i * 110, 0.06, 'square', 0.05, 0, i * 0.05);   // 倒帶聲
+  return true;
+}
+function golfReplayStep(g, H0) {
+  const rp = g.rp, b = g.ball; rp.t++;
+  if (rp.t < 34) return;
+  if (rp.t === 34) { b.vx = rp.s.vx; b.vy = rp.s.vy; b.rest = false; g.swing = 14; g.fx.flash = 0.5; g.fx.shake = 5; g.fx.fire = rp.s.power >= 90 && !rp.s.putt; noise(0.25, 0.1); }
+  if (!rp.end) {
+    const spf = clamp(rp.n / 300, 0.7, 2.2), slow = rp.n - rp.done < 50 ? (rp.n > 250 ? 0.35 : 0.6) : 1;
+    rp.acc += spf * slow;
+    while (rp.acc >= 1 && !rp.end) {
+      rp.acc--; rp.done++;
+      const ev = golfPhys(b, H0, g.wind);
+      if (ev && ev !== 'rest') golfLandFx(g, ev, b, H0, false);
+      if (['water', 'oob', 'holed', 'rest'].includes(ev) || rp.done >= rp.n || (!ev && golfRollOnGreen(g, H0, b))) { rp.end = rp.t; b.rest = true; g.fx.fire = false;
+        golfPop(g, rp.best ? (rp.hio ? '🏆' : '👏 漂亮！') : pick(['😱', '🙈', '💀']), W / 2, 170, { size: 40, screen: true, life: 80 }); }
+    }
+  } else if (rp.t - rp.end > 95) golfReplayEnd(g);
+}
+function golfReplayEnd(g) {
+  const rp = g.rp; if (!rp) return;
+  g.ball = rp.save.ball; g.last = rp.save.last; g.dir = rp.save.dir; g.wind = rp.save.wind; g.rp = null; g.trp = []; g.parts = [];
+  Object.assign(g.fx, { txt: [], fire: false, flash: 0, shake: 0 });
+  g.phase = 'holed'; g.t = (golfHioNow(g) ? 165 : 40) + 1; g.cv = golfView(g, GH()[g.hole]);
+}
+function drawGolfReplayUI(g) {
+  const rp = g.rp; if (!rp) return;
+  ctx.fillStyle = 'rgba(0,0,0,.06)'; for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1.5);      // 掃描線
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, 8); ctx.fillRect(0, H - 34, W, 34);
+  if (rp.t < 34) {                                                                                   // 倒帶
+    ctx.fillStyle = 'rgba(30,30,40,.35)'; ctx.fillRect(0, 0, W, H);
+    for (let i = 0; i < 6; i++) { const y = (hsh(i * 91 + FC * 3) % H); ctx.fillStyle = `rgba(255,255,255,${0.08 + (hsh(i + FC) % 10) / 60})`; ctx.fillRect(0, y, W, 2 + (hsh(i * 7 + FC) % 6)); }
+    txt('◀◀ 倒帶中', W / 2, H / 2, 40, '#fff', 'center', { stroke: '#000', sw: 6 });
+  }
+  if (FC % 60 < 40) { ctx.fillStyle = '#c62828'; rr(W - 156, 60, 136, 30, 6); ctx.fill(); txt('▶ REPLAY', W - 88, 81, 17, '#fff', 'center'); }
+  txt('📺 葡萄體育台', W - 88, 108, 12, '#fff', 'center', { stroke: '#000', sw: 3, weight: 'normal' });
+  if (rp.t >= 34) {
+    const k = Math.min(1, (rp.t - 34) / 14), x = -560 + k * 580, y = H - 128;
+    ctx.fillStyle = rp.hl ? 'rgba(74,20,140,.93)' : rp.best ? 'rgba(27,94,32,.92)' : 'rgba(120,20,20,.92)'; rr(x, y, 540, 76, 8); ctx.fill(); ctx.fillStyle = '#ffd54f'; ctx.fillRect(x, y, 8, 76);
+    txt(rp.hl ? `✨ 本洞精彩球路：${golfSpinInfo(rp.hl).icon} ${golfSpinInfo(rp.hl).name}` : rp.best ? (rp.hio ? '🏆 本洞最佳球（一桿進洞）' : '🏆 本洞最佳球') : '💀 本洞最慘球', x + 22, y + 30, 22, '#fff');
+    txtFit(rp.line, x + 22, y + 60, 500, 16, '#fff9c4', 'left', { weight: 'normal' });
+  }
+  if (FC % 50 < 34) txt(isTouch ? '點一下跳過重播' : '按空白鍵跳過重播', W / 2, H - 12, 13, '#bbb', 'center', { weight: 'normal' });
+}
+// ---------- 每日一洞（每天打卡多一個隨機生成的球洞） ----------
+const GOLF_DAY_THEMES = [
+  { id: 'sand', name: '沙坑地獄', par: 4, len: 2100, y0: 430, sands: 4, desc: '球道上到處都是沙坑（桿弟已經放棄耙沙了）' },
+  { id: 'typhoon', name: '颱風天', par: 3, len: W, y0: 430, wx: 'wind', trees: 1, desc: '颱風天照常開打（老闆：颱風假是給弱者放的）' },
+  { id: 'storm', name: '午後雷陣雨', par: 4, len: 1900, y0: 425, wx: 'storm', water: 1, desc: '氣象說午後有雷陣雨…老闆看起來很期待' },
+  { id: 'water', name: '水上樂園', par: 3, len: W, y0: 430, water: 2, desc: '整個球場都是水池（老闆的球已經在裡面了）' },
+  { id: 'forest', name: '老闆的森林', par: 4, len: 2000, y0: 432, trees: 3, desc: '樹比員工還多的球場' },
+  { id: 'volcano', name: '火山口果嶺', par: 3, len: W, y0: 440, volcano: 1, desc: '果嶺在山頂上，跟升遷一樣難爬' },
+  { id: 'slide', name: '下坡溜滑梯', par: 5, len: 3100, y0: 350, slope: 0.03, sands: 1, desc: '一路往下滑，跟股票一樣' },
+  { id: 'monsoon', name: '梅雨季', par: 4, len: 1800, y0: 430, wx: 'rain', sands: 1, water: 1, desc: '下雨球滾不動（跟專案進度一樣）' },
+];
+function golfDayTheme(n) { return GOLF_DAY_THEMES[(n * 3) % GOLF_DAY_THEMES.length]; }
+function genGolfDay(n) {
+  const T = golfDayTheme(n), R = mulberry(n * 977 + 13), r = (a, b) => a + R() * (b - a);
+  const len = T.len, long = len > W, tee = 150;
+  const hole = Math.round(T.volcano ? 700 : long ? len - r(230, 290) : r(770, 830)), g0 = hole - 90, g1 = hole + 90;
+  let pts = [[0, T.y0], [tee + 90, T.y0]], x = tee + 90, y = T.y0;
+  const stop = T.volcano ? g0 - 190 : g0 - 80;
+  while (x < stop) { const dx = Math.min(r(150, 240), stop - x); if (dx < 30) break; x += dx; y = clamp(y + r(-22, 22) + (T.slope || 0) * dx, 340, 452); pts.push([Math.round(x), Math.round(y)]); }
+  y = Math.round(y);
+  if (T.volcano) pts.push([g0 - 150, y], [g0 - 50, y - 78], [g1 + 30, y - 78], [g1 + 120, y], [len, y]);
+  else pts.push([g0 - 30, y], [len, y]);
+  const gr = () => ({ pts }), avoid = [[tee - 60, tee + 160], [g0 - 60, g1 + 40]];
+  const free = (a, b) => avoid.every(([p, q]) => b < p || a > q);
+  let water = null;
+  if (T.water) {
+    const w = T.water === 2 ? r(250, 300) : r(160, 210), lo = long ? tee + 500 : tee + 170, hi = long ? g0 - 500 : g0 - 90 - w;
+    const a = Math.round(r(lo, Math.max(lo, hi))), b = Math.round(a + w), ya = golfGround(gr(), a - 25), yb = golfGround(gr(), b + 25), wy = Math.round(Math.max(ya, yb) + 12);
+    pts = pts.filter(p => p[0] < a - 25 || p[0] > b + 25); pts.push([a - 25, ya], [a, wy + 24], [b, wy + 24], [b + 25, yb]); pts.sort((p, q) => p[0] - q[0]);
+    water = [a, b, wy]; avoid.push([a - 70, b + 70]);
+  }
+  const sands = [];
+  for (let k = 0, tries = 0; k < (T.sands || 0) && tries < 80; tries++) {
+    const w = r(90, 140), a = Math.round(k === 0 && T.id === 'sand' ? g0 - 66 - w : r(tee + 220, g0 - 80 - w)), b = Math.round(a + w);
+    if (!free(a, b)) continue; sands.push([a, b]); avoid.push([a - 70, b + 70]); k++;
+  }
+  const trees = [];
+  for (let k = 0, tries = 0; k < (T.trees || 0) && tries < 80; tries++) {
+    const tx = Math.round(r(tee + 260, g0 - 120)), tr = Math.round(r(34, 42));
+    if (!free(tx - tr - 30, tx + tr + 30)) continue; trees.push([tx, Math.round(golfGround(gr(), tx) - r(40, 50)), tr]); avoid.push([tx - 220, tx + 220]); k++;
+  }
+  sands.sort((p, q) => p[0] - q[0]);
+  const R2 = mulberry(n * 331 + 7), r2 = (a, b) => a + R2() * (b - a), sg = () => (R2() < 0.5 ? -1 : 1);
+  const gc = [[Math.round(g0 + r2(30, 70)), Math.round(sg() * r2(3, 8)), Math.round(r2(25, 42))], [Math.round(g1 - r2(30, 70)), Math.round(sg() * r2(3, 8)), Math.round(r2(25, 42))]], stimp = ['fast', 'mid', 'slow'][Math.floor(R2() * 3)], gl = { t: Math.round(sg() * r2(0.006, 0.02) * 1000) / 1000, b: [[Math.round(r2(g0 + 20, g1 - 20)), Math.round(sg() * r2(10, 35)), Math.round(sg() * r2(0.8, 2)) || 1, Math.round(r2(25, 40))]] };
+  return { gc, gl, stimp, name: `Day ${n}｜${T.name}`, par: T.par, len: long ? len : undefined, tee, hole, pts, green: [g0, g1], water, sands, trees, wx: T.wx || null, look: n % 5, theme: T.id, desc: T.desc, day: n };
+}
+function openGolfDay(n) { openGolf({ course: [genGolfDay(n)], daily: n }); }
+function golfExit() { const dn = G.golf && G.golf.daily; G.golf = null; if (dn) { openCalendar(); G.cal.sel = dn; } else goTitle(); }
+
+// ---------- 高爾夫：特殊球路（逆旋、上旋、高吊、穿林、打水漂） ----------
+const GOLF_SPINS = [
+  { id: null, icon: '⚪', name: '普通', col: '255,255,255', desc: '一般的球，沒什麼特別（跟你的薪水一樣）' },
+  { id: 'back', icon: '↩️', name: '逆旋', col: '128,222,234', desc: '逆旋球：落地後往回滾，咬住果嶺（打過頭也不怕）' },
+  { id: 'top', icon: '⏩', name: '上旋', col: '255,183,77', desc: '上旋球：飛得比較低、落地後一直往前衝' },
+  { id: 'flop', icon: '🎈', name: '高吊', col: '244,143,177', desc: '高吊球：飛很高、落地幾乎不滾（越過樹和沙坑）' },
+  { id: 'stinger', icon: '🚀', name: '穿林', col: '239,83,80', desc: '穿林低平球：貼地飛、不怕風（颱風天必備）' },
+  { id: 'skim', icon: '💧', name: '水漂', col: '79,195,247', desc: '打水漂：角度壓低打到水面會彈起來（最多 3 次）' },
+];
+function golfSpinInfo(id) { return GOLF_SPINS.find(s => s.id === (id || null)) || GOLF_SPINS[0]; }
+function golfSpinSel(i) { const g = G.golf; if (!g || g.phase !== 'aim' || golfPutt()) return; const s = GOLF_SPINS[(i + GOLF_SPINS.length) % GOLF_SPINS.length]; g.spin = s.id; SFX.coin(); }
+function golfSpinCycle(d) { const g = G.golf; if (!g) return; golfSpinSel(GOLF_SPINS.findIndex(s => s.id === (g.spin || null)) + d); }
+function golfSpinVel(v, spin) {                                 // 出手速度：特殊球路調整
+  if (spin === 'stinger') { v[0] *= 1.05; v[1] *= 0.62; }
+  else if (spin === 'flop') { v[0] *= 0.72; v[1] *= 1.22; }
+  else if (spin === 'skim') { v[1] *= 0.8; }
+  return v;
+}
+function drawGolfSpinUI(g) {                                    // 左下角：選球路
+  if (g.phase !== 'aim' && g.phase !== 'power') return;
+  if (golfPutt()) return;
+  const cur = g.spin || null, info = golfSpinInfo(cur);
+  txtFit(info.icon + ' ' + info.desc, 160, H - 96, 300, 13, '#fff', 'center', { stroke: '#1b5e20', sw: 4, weight: 'normal' });
+  GOLF_SPINS.forEach((s, i) => {
+    const x = 12 + (i % 3) * 98, y = H - 84 + Math.floor(i / 3) * 38, on = s.id === cur;
+    if (g.phase === 'power' && !on) { ctx.globalAlpha = 0.35; }
+    ctx.fillStyle = on ? `rgba(${s.col},.95)` : 'rgba(0,0,0,.45)'; rr(x, y, 92, 32, 9); ctx.fill();
+    if (on) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke(); }
+    txt(`${s.icon} ${s.name}`, x + 46, y + 22, 14, on ? '#1b1b1b' : '#fff', 'center');
+    if (!isTouch) txt(String(i + 1), x + 8, y + 12, 9, on ? '#333' : 'rgba(255,255,255,.6)', 'left', { weight: 'normal' });
+    ctx.globalAlpha = 1;
+    if (g.phase === 'aim' && !G.capture) G.ui.push({ x, y, w: 92, h: 32, fn: () => golfSpinSel(i) });
+  });
+}
+function drawSpinMarks(b, spin, dir) {                           // 飛行中的旋轉線
+  if (!spin || b.rest) return;
+  const s = golfSpinInfo(spin), rot = FC * 0.5 * (spin === 'back' ? -dir : dir);
+  ctx.strokeStyle = `rgba(${s.col},.95)`; ctx.lineWidth = 1.6;
+  for (let k = 0; k < 3; k++) { const a = rot + k * 2.09; ctx.beginPath(); ctx.arc(b.x, b.y, 9, a, a + 0.9); ctx.stroke(); }
+}
+
+// ---------- 颱風名場面：老闆的「帽子」飛走（鏡頭特寫） ----------
+function golfWigMove(g) {                                     // 假髮路線：往上飛→空中轉圈→降落在桿弟頭上
+  const w = g.wig, u = ++w.t, d = w.dir;
+  if (u <= 40) { w.x = w.x0 + d * u * 3.5; w.y = w.y0 - u * 2.6 + Math.sin(u * 0.25) * 4; w.xa = w.x; w.ya = w.y; }
+  else if (u <= 70) { const th = (u - 40) / 30 * Math.PI * 2; w.x = w.xa + d * 38 * Math.sin(th); w.y = w.ya - 38 * (1 - Math.cos(th)); }
+  else if (u <= 110) { const k = (u - 70) / 40, e = k * k * (3 - 2 * k); w.x = w.xa + (w.tx - w.xa) * e; w.y = w.ya + (w.ty - w.ya) * e - Math.sin(k * Math.PI) * 50; }
+  else { g.wig = null; g.wigOnCaddie = true; noise(0.15, 0.1); tone(660, 0.1, 'triangle', 0.08); return; }
+  w.rot += 0.22 * d * (u > 95 ? (110 - u) / 15 : 1);
+}
+function golfWigHead(g, H0) { const B = g.bp, bd = B.ball.x > H0.hole ? -1 : 1, x = B.ball.x - 30 * bd; return { x, y: golfGround(H0, x) - 44, bd }; }
+function golfWigStep(g, H0, B) {
+  const t = B.t, hd = golfWigHead(g, H0);
+  if (t === 1) noise(1.4, 0.12);
+  if (t < 26 && t % 5 === 0) g.fx.shake = 1.5 + t / 7;
+  if (t === 26) { g.bald = true; const len = golfLen(H0); let dir = Math.sign(g.wind) || 1; if (hd.x + dir * 220 < 40 || hd.x + dir * 220 > len - 40) dir = -dir;   // 飛出場外就被亂流吹回來
+    const cx = B.ball.x - 72 * hd.bd; g.wig = { x: hd.x, y: hd.y - 18, x0: hd.x, y0: hd.y - 18, dir, tx: cx, ty: golfGround(H0, cx) - 50, rot: 0, t: 0 }; g.fx.flash = 0.45; g.fx.shake = 8; noise(0.5, 0.25); tone(1400, 0.6, 'sine', 0.08, 300); buzz(60);
+    B.note = '🌀 老闆的「帽子」飛走了！！'; golfPop(g, '咻——！！', W / 2, 165, { size: 40, col: '#fff', burst: '#455a64', screen: true, life: 60 }); }
+  if (t === 88) { golfPop(g, '老闆：「那是帽子！不是假髮！」', W / 2, 165, { size: 26, col: '#fff59d', screen: true, life: 110 }); chatter('durian', 6); SFX.nope(); }
+  if (t === 140) { g.caddie = '……（默默戴上）'; g.caddieT = 110; golfPop(g, '（假髮降落在桿弟頭上）', W / 2, 205, { size: 16, screen: true, life: 100 }); }
+  if (t >= 180) { B.state = 'aim'; B.t = 2; B.note = '（老闆若無其事地繼續打球）'; }
+}
+function drawGolfWigUI(g) {                                    // 獨家畫面字卡
+  const B = g.bp; if (!B || B.state !== 'wig' || B.t < 28) return;
+  const k = Math.min(1, (B.t - 28) / 12), x = -560 + k * 580, y = H - 128;
+  ctx.fillStyle = 'rgba(183,28,28,.94)'; rr(x, y, 540, 76, 8); ctx.fill(); ctx.fillStyle = '#ffd54f'; ctx.fillRect(x, y, 8, 76);
+  txt('📺 獨家畫面｜颱風吹走老闆的「帽子」', x + 22, y + 30, 21, '#fff');
+  txtFit(B.t < 88 ? '記者：「現場風勢非常強勁…帽子…還有一些頭髮…正在飛離球場…」' : '記者：「當事人表示：那是帽子。我們尊重當事人的說法。」', x + 22, y + 60, 500, 15, '#ffebee', 'left', { weight: 'normal' });
+  if (FC % 40 < 26) { ctx.fillStyle = '#d50000'; rr(W - 156, 60, 136, 30, 6); ctx.fill(); txt('● 獨家', W - 88, 81, 17, '#fff', 'center'); }
+}
+
+// ---------- 果嶺：坡度、果嶺速度、讀線、桿弟（不太準的）建議、OK 球 ----------
+const GOLF_STIMP = { fast: { name: '快', fr: 0.988 }, mid: { name: '中', fr: 0.985 }, slow: { name: '慢', fr: 0.981 } };
+function golfElev(H0, x) {                                      // 果嶺起伏（往上為正，單位 px）
+  const C = H0.gc; if (!C) return 0;
+  const a = H0.green[0] - 30, b = H0.green[1] + 30; if (x <= a || x >= b) return 0;
+  let e = 0; for (let i = 0; i < C.length; i++) { const d = (x - C[i][0]) / C[i][2]; if (d > -3 && d < 3) e += C[i][1] * Math.exp(-d * d); }
+  const k = Math.min(1, (x - a) / 40, (b - x) / 40); return e * k * k * (3 - 2 * k);
+}
+function golfGreenFr(H0, wet) { const s = GOLF_STIMP[H0.stimp || 'mid'] || GOLF_STIMP.mid; return s.fr - (wet ? 0.01 : 0); }
+function golfSlopeAt(H0, x) { return (golfGround(H0, x + 3) - golfGround(H0, x - 3)) / 6; }   // >0：往右是下坡
+const GOLF_PD = {};
+function golfPuttDist(p, fr) {                                  // 平的果嶺上，這個力道會滾幾 px
+  const key = fr.toFixed(4) + ':' + Math.round(p * 2); if (GOLF_PD[key] != null) return GOLF_PD[key];
+  const F = { pts: [[0, 400], [9000, 400]], green: [0, 9000], hole: -999, stimp: 'mid', _fr: fr }, b = { x: 100, y: 395, rest: false };
+  [b.vx, b.vy] = golfVel(0, p, true, 1); let n = 0; while (n++ < 6000 && golfPhys(b, F, 0) !== 'rest');
+  return (GOLF_PD[key] = b.x - 100);
+}
+function golfReadGreen(g, H0) {                                 // 進入推桿：算出「正確」力道，桿弟再給一個不一定對的建議
+  const b = g.ball, d = golfDir(); let lo = null, hi = null, best = null;
+  for (let p = 1; p <= 100; p += 0.5) { const sc = golfTry(b, H0, g.wind, 0, p, true, d); if (sc < 0) { if (lo == null) lo = p; hi = p; } if (!best || sc < best.sc) best = { p, sc }; }
+  const ideal = lo != null ? (lo + hi) / 2 : best.p, right = Math.random() < 0.55;
+  const sug = clamp(right ? ideal * rand(0.96, 1.04) : ideal * (Math.random() < 0.5 ? rand(0.55, 0.78) : rand(1.25, 1.5)), 3, 100);
+  const fr = golfGreenFr(H0, golfWet(g)), dist = Math.abs(H0.hole - b.x);
+  let flatP = 1; for (let p = 1; p <= 100; p += 1) { if (golfPuttDist(p, fr) >= dist) { flatP = p; break; } flatP = p; }
+  const line = sug > flatP * 1.12 ? pick(['這是上坡，推大力一點！', '要推過洞一點點，大膽推！', '我看是上坡啦（很有自信）']) : sug < flatP * 0.88 ? pick(['這是下坡，輕輕碰就好', '很快喔！碰一下就會滾', '下坡，摸一下就好']) : pick(['差不多是平的，正常推', '直直推，不用想太多', '這球簡單啦（桿弟說的）']);
+  g.adv = { x: b.x, ideal, p: sug, right, line, conf: Math.round(rand(72, 99)), lo, hi };
+}
+function golfAdvReact(g, H0, holed) {                           // 推完：桿弟的反應
+  const a = g.adv, sh = g.shots && g.shots[g.shots.length - 1]; if (!a || !sh || !sh.putt) return;
+  const followed = Math.abs(sh.power - a.p) < 7;
+  let s = null;
+  if (holed && followed) s = a.right ? '桿弟：「看吧！我就說！」' : '桿弟：「…我是故意說錯的，激勵你」';
+  else if (holed) s = pick(['桿弟：「你沒聽我的…結果進了？」', '桿弟：「（默默把建議收回口袋）」']);
+  else if (followed && !a.right) s = pick(['桿弟：「…果嶺剛剛被老闆的假髮壓過」', '桿弟：「風向變了（推桿也有風？）」', '桿弟：「這草昨天剛剪的，我不知道」']);
+  else if (followed) s = '桿弟：「力道是對的，是球不聽話」';
+  if (s) { g.caddie = s.replace('桿弟：', '').replace(/^「|」$/g, ''); g.caddieT = 110; }
+}
+function drawGreenRead(g, H0) {                                  // 果嶺讀線：顏色＋流動的箭頭（坡越陡越密）
+  const [g0, g1] = H0.green, d = golfDir();
+  for (let x = g0; x < g1; x += 4) {
+    const s = golfSlopeAt(H0, x + 2), rel = s * d, a = Math.min(0.6, Math.abs(s) * 9); if (a < 0.04) continue;
+    ctx.fillStyle = rel > 0 ? `rgba(41,121,255,${a})` : `rgba(255,82,82,${a})`;
+    ctx.beginPath(); ctx.moveTo(x, golfGround(H0, x)); ctx.lineTo(x + 4, golfGround(H0, x + 4)); ctx.lineTo(x + 4, golfGround(H0, x + 4) + 9); ctx.lineTo(x, golfGround(H0, x) + 9); ctx.fill();
+  }
+  let acc = 0; ctx.lineWidth = 1.6;
+  for (let x = g0 + 4; x < g1 - 4; x += 2) {
+    const s = golfSlopeAt(H0, x); acc += Math.abs(s) * 2.2; if (acc < 1 || Math.abs(s) < 0.012) continue; acc = 0;
+    const dir = Math.sign(s), ph = ((FC * 0.6 * Math.min(3, Math.abs(s) * 30)) % 10) * dir, ax = x + ph, ay = golfGround(H0, ax) - 7;
+    ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.95, 0.35 + Math.abs(s) * 8)})`; ctx.beginPath(); ctx.moveTo(ax - 3 * dir, ay - 3); ctx.lineTo(ax + 1 * dir, ay); ctx.lineTo(ax - 3 * dir, ay + 3); ctx.stroke();
+  }
+}
+function drawPuttPanel(g, H0) {                                  // 右上角：推桿線剖面（高低差放大）
+  const b = g.ball, d = golfDir(), x0 = b.x, x1 = H0.hole, ext = 30, lo = Math.min(x0, x1) - (d < 0 ? ext : 8), hi = Math.max(x0, x1) + (d > 0 ? ext : 8);
+  const px = W - 312, py = 58, pw = 292, ph = 112, e0 = golfGround(H0, x0), X = x => px + 14 + (d > 0 ? (x - lo) : (hi - x)) / (hi - lo) * (pw - 28), Y = x => py + 64 + clamp((golfGround(H0, x) - e0) * 8, -38, 34);
+  ctx.fillStyle = 'rgba(10,40,20,.82)'; rr(px, py, pw, ph, 10); ctx.fill();
+  txt('📐 推桿線剖面（高低差放大 8 倍）', px + 12, py + 18, 12, '#c8e6c9', 'left', { weight: 'normal' });
+  ctx.lineWidth = 3;
+  for (let x = lo; x < hi; x += 3) { const s = golfSlopeAt(H0, x + 1.5) * d; ctx.strokeStyle = s > 0.006 ? '#64b5f6' : s < -0.006 ? '#ff8a80' : '#a5d6a7'; ctx.beginPath(); ctx.moveTo(X(x), Y(x)); ctx.lineTo(X(x + 3), Y(x + 3)); ctx.stroke(); }
+  ctx.fillStyle = '#fff'; circ(X(x0), Y(x0) - 4, 4); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(X(x1), Y(x1)); ctx.lineTo(X(x1), Y(x1) - 20); ctx.stroke(); ctx.fillStyle = '#e53935'; ctx.fillRect(X(x1), Y(x1) - 20, 8 * (d > 0 ? 1 : 1), 5);
+  if (g.adv) { const sx = X(clamp(x0 + (golfPuttDist(g.adv.p, golfGreenFr(H0, golfWet(g))) * d), lo, hi)); txt('🍊', sx, Y(clamp(x0 + golfPuttDist(g.adv.p, golfGreenFr(H0, golfWet(g))) * d, lo, hi)) - 8, 11, '#fff', 'center'); }
+  const dh = e0 - golfGround(H0, x1), cm = Math.round(Math.abs(dh) * 15 / 5) * 5, yd = (Math.abs(x1 - x0) / 6).toFixed(1);
+  txt(`距洞 ${yd} 碼｜${Math.abs(dh) < 0.4 ? '幾乎平的' : (dh > 0 ? '⬆ 上坡 ' : '⬇ 下坡 ') + cm + ' 公分'}｜果嶺速度：${(GOLF_STIMP[H0.stimp || 'mid'] || GOLF_STIMP.mid).name}${golfWet(g) ? '（雨天變慢）' : ''}`, px + 12, py + ph - 10, 12, '#fff', 'left');
+  txt('紅＝上坡（推重一點）　藍＝下坡（推輕一點）', px + 12, py + 36, 10, '#a5d6a7', 'left', { weight: 'normal' });
+}
+function drawPuttUI(g, H0) {                                     // 推桿：力道刻度（碼數）、桿弟建議
+  const fr = golfGreenFr(H0, golfWet(g)), bx = W / 2 - 160;
+  let lastX = -99; for (const yd of [2, 5, 10, 15, 20]) { let p = null; for (let q = 1; q <= 100; q += 1) if (golfPuttDist(q, fr) >= yd * 6) { p = q; break; } if (p == null) continue;
+    const x = bx + 320 * p / 100; if (x - lastX < 30) continue; lastX = x; ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillRect(x - 0.5, H - 36, 1.5, 6); txt(yd + '碼', x, H - 20, 10, '#fff', 'center', { stroke: '#1b5e20', sw: 3, weight: 'normal' }); }
+  const a = g.adv; if (!a) return;
+  const x = bx + 320 * a.p / 100; ctx.strokeStyle = '#ffb74d'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, H - 62); ctx.lineTo(x, H - 34); ctx.stroke(); txt('🍊', x, H - 64, 14, '#fff', 'center');
+  ctx.fillStyle = 'rgba(0,0,0,.5)'; rr(12, H - 86, 296, 70, 10); ctx.fill();
+  txt('🍊 桿弟讀線：', 24, H - 64, 13, '#ffcc80', 'left');
+  txtFit(`「${a.line}」`, 24, H - 44, 276, 14, '#fff', 'left');
+  txt(`建議 ${Math.round(a.p / 10)} 成力（看橘色標記）｜信心 ${a.conf}%`, 24, H - 24, 11, '#ffe0b2', 'left', { weight: 'normal' });
+}
+
+// ---------- 俯瞰果嶺（推桿：看左右的坡、調方向） ----------
+function golfLatElev(H0, u, v) {                                // 橫向的坡（往右為 +v）
+  const L = H0.gl; if (!L) return 0;
+  let e = (L.t || 0) * v; for (const [bu, bv, h, w] of (L.b || [])) { const du = u - bu, dv = v - bv; e += h * Math.exp(-(du * du + dv * dv) / (w * w)); }
+  return e;
+}
+function golfTdElev(H0, u, v) { return golfElev(H0, u) + golfLatElev(H0, u, v); }
+function golfTdGrad(H0, u, v) { return [(golfTdElev(H0, u + 2, v) - golfTdElev(H0, u - 2, v)) / 4, (golfTdElev(H0, u, v + 2) - golfTdElev(H0, u, v - 2)) / 4]; }
+function golfTdZone(H0, u, v) {                                 // 0 果嶺、1 果嶺邊、2 長草、3 太遠
+  const [g0, g1] = H0.green, cu = (g0 + g1) / 2, A = (g1 - g0) / 2 + 12, B = 62, r = ((u - cu) / A) ** 2 + (v / B) ** 2;
+  return r <= 1 ? 0 : r <= 1.45 ? 1 : r <= 2.6 ? 2 : 3;
+}
+function golfTdDir(H0, t, aim) {                                // 瞄準方向（aim：往右為正，單位度）
+  let fu = H0.hole - t.u, fv = -t.v; const L = Math.hypot(fu, fv) || 1; fu /= L; fv /= L;
+  const a = aim * Math.PI / 180, ru = -fv, rv = fu;               // 右手邊
+  return [fu * Math.cos(a) + ru * Math.sin(a), fv * Math.cos(a) + rv * Math.sin(a)];
+}
+function golfTdPhys(H0, t, wet) {                               // 俯瞰：球走一個子步
+  t.u += t.vu / 2; t.v += t.vv / 2;
+  const z = golfTdZone(H0, t.u, t.v);
+  if (z === 3) { t.u -= t.vu; t.v -= t.vv; t.vu = t.vv = 0; return 'rest'; }
+  const fr = z === 0 ? golfGreenFr(H0, wet) : z === 1 ? 0.95 : 0.9; t.vu *= fr; t.vv *= fr;
+  const [gu, gv] = golfTdGrad(H0, t.u, t.v), au = -gu * 0.112, av = -gv * 0.112; t.vu += au; t.vv += av;
+  const dc = Math.hypot(t.u - H0.hole, t.v), sp = Math.hypot(t.vu, t.vv);
+  if (dc < 6 && sp < 1.15) { t.u = H0.hole; t.v = 0; t.vu = t.vv = 0; return 'holed'; }
+  if (dc < 6 && sp < 1.8 && !t.lip) { t.lip = true; const r = (Math.random() < 0.5 ? -1 : 1) * rand(0.7, 1.2), c = Math.cos(r), s = Math.sin(r); [t.vu, t.vv] = [(t.vu * c - t.vv * s) * 0.5, (t.vu * s + t.vv * c) * 0.5]; return 'lip'; }   // 轉出來
+  if (sp < 0.08 && Math.hypot(au, av) < 0.007) { t.vu = t.vv = 0; return 'rest'; }
+  return null;
+}
+function golfTdSim(H0, u, v, aim, p, wet) {                      // 模擬一推（不轉出：讀線用）
+  const t = { u, v, lip: true }, [du, dv] = golfTdDir(H0, t, aim), s = 0.6 + p / 100 * 7.4; t.vu = du * s; t.vv = dv * s;
+  let n = 0, ev = null; while (n++ < 5000 && ev !== 'rest' && ev !== 'holed') ev = golfTdPhys(H0, t, wet);
+  return { ev, u: t.u, v: t.v, d: Math.hypot(t.u - H0.hole, t.v) };
+}
+function golfTdEnter(g, H0) {
+  g.td = { u: g.ball.x, v: g.pv || 0, vu: 0, vv: 0, aim: 0, trail: [], n: 0 }; g.adv = null; g.angle = 0; g.caddieT = 0;
+  golfPop(g, '🔭 俯瞰果嶺：看清楚左右的坡再推', W / 2 - 40, 120, { size: 17, screen: true, life: 90 });
+}
+function golfTdRead(g, H0) {                                     // 正確答案＋桿弟（大概一半對）的建議
+  const t = g.td, wet = golfWet(g), dist = Math.hypot(H0.hole - t.u, t.v); let best = null; const holedSet = [];
+  for (let a = -20; a <= 20; a += 1) for (let p = 2; p <= 100; p += 1.5) { const r = golfTdSim(H0, t.u, t.v, a, p, wet); const sc = r.ev === 'holed' ? -1 : r.d; if (sc < 0) holedSet.push([a, p]); if (!best || sc < best.sc) best = { a, p, sc }; }
+  let ia = best.a, ip = best.p, lo = null, hi = null;
+  if (holedSet.length) { ia = holedSet.reduce((s, h) => s + h[0], 0) / holedSet.length; const near = holedSet.filter(h => Math.abs(h[0] - ia) <= 1); ip = near.reduce((s, h) => s + h[1], 0) / near.length; lo = Math.min(...near.map(h => h[1])); hi = Math.max(...near.map(h => h[1])); }
+  const right = Math.random() < 0.55;
+  const sa = right ? ia + rand(-0.6, 0.6) : (Math.random() < 0.5 ? -ia * rand(0.6, 1.2) - Math.sign(ia || 1) * rand(1, 3) : ia * rand(1.8, 2.6) + rand(-1, 1));
+  const sp = clamp(right ? ip * rand(0.96, 1.04) : ip * (Math.random() < 0.5 ? rand(0.6, 0.8) : rand(1.25, 1.45)), 3, 100);
+  const cups = Math.round(Math.abs(Math.tan(sa * Math.PI / 180) * dist) / 8 * 2) / 2;
+  const fr = golfGreenFr(H0, wet); let flatP = 1; for (let q = 1; q <= 100; q++) { flatP = q; if (golfPuttDist(q, fr) >= dist) break; }
+  const pw = sp > flatP * 1.12 ? '上坡，推重一點' : sp < flatP * 0.88 ? '下坡，輕輕推' : '力道正常';
+  const line = (cups < 0.5 ? '直直瞄洞' : `往${sa > 0 ? '右' : '左'}瞄 ${cups} 個洞`) + '，' + pw + pick(['！', '（很有把握）', '，相信我', '']);
+  g.adv = { x: g.ball.x, key: t.u.toFixed(1) + ',' + t.v.toFixed(1), ideal: ip, ia, p: sp, a: sa, right, line, conf: Math.round(rand(72, 99)), lo, hi, td: true };
+}
+function golfTdTurn(d) { const g = G.golf; if (!g || !g.td || g.phase !== 'aim') return; g.td.aim = clamp(g.td.aim + d, -30, 30); }
+function golfTdShoot(g, H0) {
+  const t = g.td, [du, dv] = golfTdDir(H0, t, t.aim), s = 0.6 + g.power / 100 * 7.4;
+  t.vu = du * s; t.vv = dv * s; t.lip = false; t.roll = false; t.trail = [[t.u, t.v]]; t.n = 0; t.from = Math.hypot(H0.hole - t.u, t.v);
+  g.last = { x: g.ball.x, y: g.ball.y }; g.strokes++; g.phase = 'fly'; g.t = 0; g.swing = 14; g.ffT = 0; SFX.bump(); buzz(15);
+  (g.shots = g.shots || []).push({ td: true, putt: true, spin: null, power: g.power, aim: t.aim, from: t.from, ev: null, gain: 0 });
+}
+function golfTdStep(g, H0, quiet) {                               // 回傳 true＝這一推結束
+  const t = g.td, ev = golfTdPhys(H0, t, golfWet(g)); t.n++;
+  g.ball.x = t.u; g.ball.y = golfGround(H0, t.u) - 5; g.pv = t.v;
+  if (t.n % 3 === 0) { t.trail.push([t.u, t.v]); if (t.trail.length > 120) t.trail.shift(); }
+  if (ev === 'lip' && !quiet) { golfPop(g, pick(['轉出來了！😱', '舔洞而過…', '球：「我只是路過」']), W / 2, 170, { size: 26, col: '#ffcc80', screen: true, life: 70 }); tone(500, 0.15, 'square', 0.06, 200); g.fx.shake = 4; }
+  if (ev !== 'holed' && ev !== 'rest') return false;
+  const sh = g.shots[g.shots.length - 1], dc = Math.hypot(t.u - H0.hole, t.v); sh.ev = ev; sh.endDist = dc; sh.gain = t.from - dc; sh.onGreen = true;
+  const fin = () => { g.td = null; g.pv = 0; g.ball = { x: H0.hole, y: golfGround(H0, H0.hole) - 5, vx: 0, vy: 0, rest: true }; g.phase = 'holed'; g.t = 0; g.cv = golfView(g, H0); g.cam = g.cv.x - W / 2 / g.cv.z; };
+  if (ev === 'holed') {
+    g.me[g.hole] = g.strokes; golfAdvReact(g, H0, true); fin(); SFX.ding(); golfLandFx(g, 'holed', g.ball, H0, false);
+    if (g.strokes === 1) { g.hio = true; g.fx.fw = 220; golfPop(g, '🏆 一桿進洞！！！', W / 2, 140, { size: 44, col: '#fff59d', burst: '#c62828', screen: true, life: 150 }); }
+    else if (t.roll && !quiet) golfPop(g, '切進洞！！', W / 2, 200, { size: 26, col: '#b9f6ca', screen: true, life: 100 });
+    if (sh.from > 60) golfPop(g, pick(['長推進洞！！', '這推…看了兩次坡！', '讀線大師！']), W / 2, 210, { size: 22, col: '#b9f6ca', screen: true, life: 100 });
+    return true;
+  }
+  if (golfTdZone(H0, t.u, t.v) <= 1 && dc < 11) {                // OK 球
+    g.strokes++; g.me[g.hole] = g.strokes; golfAdvReact(g, H0, true); fin(); SFX.ding();
+    golfPop(g, pick(['🤝 OK 球！（多算一桿）', '🤝 這球給你！（老闆難得大方）']), W / 2, 160, { size: 26, col: '#fff59d', screen: true, life: 90 }); return true;
+  }
+  golfAdvReact(g, H0, false);
+  if (g.strokes >= Math.max(7, H0.par + 4)) { g.me[g.hole] = g.strokes + 1; g.msg = '老闆：「好啦好啦，算你進了」'; g.msgT = 120; fin(); return true; }
+  if (golfTdZone(H0, t.u, t.v) >= 2) {                          // 滾出果嶺：回到側面視角
+    g.td = null; g.pv = 0; g.ball = { x: t.u, y: golfGround(H0, t.u) - 5, vx: 0, vy: 0, rest: true }; g.phase = 'aim'; g.t = 0; g.noTD = false;
+    g.cv = golfView(g, H0); g.cam = g.cv.x - W / 2 / g.cv.z; if (!quiet) golfPop(g, '滾出果嶺了…', W / 2, 150, { size: 20, screen: true, life: 70 }); return true;
+  }
+  if (!quiet && dc < 40) golfPop(g, `差 ${(dc / 6).toFixed(1)} 碼`, W / 2, 170, { size: 20, screen: true, life: 60 });
+  t.aim = 0; t.roll = false; g.phase = 'aim'; g.t = 0; return true;
+}
+function golfTdFly(g, H0) {
+  for (let s = 0; s < 2; s++) if (golfTdStep(g, H0, false)) return;
+  if (META.golfFF && g.td && g.td.n > 60) golfTdSkip(g, H0);
+}
+function golfTdSkip(g, H0) { let n = 0; while (g.phase === 'fly' && g.td && n++ < 6000) if (golfTdStep(g, H0, true)) break; g.ffFlash = 16; }
+// ---- 畫面 ----
+function drawGolfTD(g, H0) {
+  const t = g.td, d = t.u <= H0.hole ? 1 : -1, Mu = (t.u + H0.hole) / 2, Mv = t.v / 2, L = Math.hypot(H0.hole - t.u, t.v);
+  const S = clamp(300 / (L + 50), 1.6, 4.6), CY = 290, toT = (u, v) => [W / 2 + (v - Mv) * S * d, CY - (u - Mu) * S * d], frT = (X, Y) => [Mu - (Y - CY) / (S * d), Mv + (X - W / 2) / (S * d)];
+  const [g0, g1] = H0.green, cu = (g0 + g1) / 2, A = (g1 - g0) / 2 + 12, B = 62, [ex, ey] = toT(cu, 0), wet = golfWet(g);
+  // 長草＋割草紋
+  ctx.fillStyle = '#3d7f2e'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(255,255,255,.05)'; for (let i = -20; i < 40; i++) ctx.fillRect(((i * 48 + (Mu * S) % 96) % (W + 200)) - 100, 0, 24, H);
+  ctx.fillStyle = 'rgba(15,55,10,.25)'; for (let i = 0; i < 220; i++) ctx.fillRect(gR(i, 81) * W, gR(i, 82) * H, 2, 1.5);
+  // 沙坑（俯瞰示意：果嶺前後的沙坑）
+  for (const [s0, s1] of golfSands(H0)) { if (s1 < g0 - 120 || s0 > g1 + 120) continue; const [sx, sy] = toT((s0 + s1) / 2, -B * 1.25); ctx.fillStyle = '#ead9a0'; ctx.beginPath(); ctx.ellipse(sx, sy, 34 * S / 2, (s1 - s0) / 2 * S, 0, 0, Math.PI * 2); ctx.fill(); }
+  // 果嶺邊＋果嶺
+  ctx.save(); ctx.translate(ex, ey);
+  ctx.fillStyle = '#5fae45'; ctx.beginPath(); ctx.ellipse(0, 0, B * S * 1.204, A * S * 1.204, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = wet ? '#6dbb55' : '#7fd062'; ctx.beginPath(); ctx.ellipse(0, 0, B * S, A * S, 0, 0, Math.PI * 2); ctx.fill(); ctx.clip();
+  ctx.restore(); ctx.save(); ctx.beginPath(); ctx.ellipse(ex, ey, B * S, A * S, 0, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,.07)'; for (let i = -30; i < 30; i++) { ctx.save(); ctx.translate(ex, ey); ctx.rotate(0.6); ctx.fillRect(i * 22, -600, 11, 1200); ctx.restore(); }
+  const ec = golfTdElev(H0, H0.hole, 0), cell = 12;                // 高低：暖色＝高、冷色＝低
+  for (let Y = 50; Y < H; Y += cell) for (let X = 0; X < W; X += cell) {
+    const [u, v] = frT(X + cell / 2, Y + cell / 2); if (golfTdZone(H0, u, v) > 0) continue;
+    const e = clamp((golfTdElev(H0, u, v) - ec) / 5, -1, 1), a = Math.abs(e) * 0.5; if (a < 0.03) continue;
+    ctx.fillStyle = e > 0 ? `rgba(255,112,67,${a})` : `rgba(66,165,245,${a})`; ctx.fillRect(X, Y, cell, cell);
+  }
+  const gap = 34;                                                  // 流動的坡度點（往低處流，越陡越快）
+  for (let Y = 60; Y < H; Y += gap) for (let X = 6; X < W; X += gap) {
+    const [u, v] = frT(X, Y); if (golfTdZone(H0, u, v) > 0) continue;
+    const [gu, gv] = golfTdGrad(H0, u, v), m = Math.hypot(gu, gv); if (m < 0.03) continue;
+    const su = -gu / m, sv = -gv / m, dx = sv * d, dy = -su * d, ph = (FC * (0.006 + m * 0.12) + ((X * 7 + Y * 13) % 100) / 100) % 1;
+    for (let k = 0; k < 2; k++) { const q = ((ph + k / 2) % 1), qq = q * 20; ctx.fillStyle = `rgba(255,255,255,${(0.25 + Math.min(0.5, m * 4)) * Math.sin(q * Math.PI)})`; circ(X + dx * qq, Y + dy * qq, 1.3 + Math.min(1.2, m * 6)); ctx.fill(); }
+  }
+  ctx.restore();
+  // 洞＋旗
+  const [hx, hy] = toT(H0.hole, 0), cr = Math.max(6, 6 * S * 0.9);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ell(hx + 3, hy + 3, cr, cr); ctx.fill(); ctx.fillStyle = '#111'; circ(hx, hy, cr); ctx.fill(); ctx.strokeStyle = '#eee'; ctx.lineWidth = 1.5; circ(hx, hy, cr); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx + 34, hy + 18); ctx.stroke();
+  ctx.strokeStyle = '#fafafa'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx + 10, hy - 30); ctx.stroke();
+  const fw = Math.sin(FC * 0.15) * 3; ctx.fillStyle = '#e53935'; ctx.beginPath(); ctx.moveTo(hx + 10, hy - 30); ctx.lineTo(hx + 34 + fw, hy - 26); ctx.lineTo(hx + 8, hy - 18); ctx.fill();
+  // 球的軌跡、瞄準線、桿弟標記
+  const [bx, by] = toT(t.u, t.v);
+  if (t.trail.length > 1) { ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 2; ctx.beginPath(); t.trail.forEach(([u, v], i) => { const [x, y] = toT(u, v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.lineTo(bx, by); ctx.stroke(); }
+  if (g.phase === 'aim' || g.phase === 'power') {
+    const [du, dv] = golfTdDir(H0, t, t.aim), len = g.phase === 'power' ? golfPuttDist(g.power, golfGreenFr(H0, wet)) : L + 10, [ax, ay] = toT(t.u + du * len, t.v + dv * len);
+    ctx.setLineDash([7, 6]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(ax, ay); ctx.stroke(); ctx.setLineDash([]);
+    const ang = Math.atan2(ay - by, ax - bx); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax - 12 * Math.cos(ang - 0.4), ay - 12 * Math.sin(ang - 0.4)); ctx.lineTo(ax - 12 * Math.cos(ang + 0.4), ay - 12 * Math.sin(ang + 0.4)); ctx.fill();
+    if (g.adv && g.adv.td) { const [cu2, cv2] = golfTdDir(H0, t, g.adv.a), [mx, my] = toT(t.u + cu2 * L, t.v + cv2 * L); ctx.strokeStyle = '#ffb74d'; ctx.lineWidth = 2; circ(mx, my, 7); ctx.stroke(); txt('🍊', mx, my - 10, 13, '#fff', 'center'); }
+  }
+  // 阿葡（從上面看）、老闆、桿弟
+  if (!t.roll && (g.phase !== 'fly' || t.n < 30)) { const [du, dv] = golfTdDir(H0, t, 0), [gx, gy] = toT(t.u - dv * 16 - du * 6, t.v + du * 16 - dv * 6);
+    ctx.fillStyle = 'rgba(0,0,0,.2)'; ell(gx + 3, gy + 4, 15, 13); ctx.fill(); const pg = ctx.createRadialGradient(gx - 4, gy - 4, 2, gx, gy, 16); pg.addColorStop(0, '#b388ff'); pg.addColorStop(1, '#5e35b1'); ctx.fillStyle = pg; circ(gx, gy, 14); ctx.fill();
+    ctx.fillStyle = '#7cb342'; ell(gx + 3, gy - 12, 7, 4, 0.5); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(bx - 4, by); ctx.stroke(); }
+  { const [ox, oy] = toT(t.u - d * 26, (t.v > 0 ? -1 : 1) * 96); ctx.fillStyle = '#9e9d24'; circ(ox, oy, 15); ctx.fill(); ctx.strokeStyle = '#827717'; ctx.lineWidth = 2; for (let i = 0; i < 10; i++) { const a = i / 10 * 6.28; ctx.beginPath(); ctx.moveTo(ox + Math.cos(a) * 15, oy + Math.sin(a) * 15); ctx.lineTo(ox + Math.cos(a) * 20, oy + Math.sin(a) * 20); ctx.stroke(); }
+    ctx.fillStyle = g.bald ? '#fffde7' : '#fff'; circ(ox, oy, g.bald ? 7 : 9); ctx.fill(); txt('老闆', ox, oy + 30, 10, '#fff', 'center', { stroke: '#1b5e20', sw: 3, weight: 'normal' });
+    const [kx, ky] = [ox + 30, oy + 4]; ctx.fillStyle = '#fb8c00'; circ(kx, ky, 10); ctx.fill(); ctx.fillStyle = '#f5ecd2'; circ(kx, ky, 6); ctx.fill(); if (g.wigOnCaddie) { ctx.fillStyle = '#4e342e'; circ(kx, ky, 5); ctx.fill(); } }
+  ctx.fillStyle = 'rgba(0,0,0,.3)'; ell(bx + 2, by + 3, 6, 5); ctx.fill(); ctx.fillStyle = '#fff'; circ(bx, by, Math.max(4.5, 2 * S)); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1; ctx.stroke();
+  // 介面
+  drawGolfWxScreen(g, null);
+  drawTdProfile(g, H0);
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; rr(12, 58, 230, 30, 8); ctx.fill(); txt('🔭 俯瞰果嶺（洞在上面）', 24, 79, 14, '#fff');
+  txt('暖色＝高　冷色＝低　白點往低處流', 24, 106, 11, '#fff', 'left', { stroke: '#1b5e20', sw: 3, weight: 'normal' });
+  if (g.phase === 'aim' || g.phase === 'power') {
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(W / 2 - 160, H - 58, 320, 22, 11); ctx.fill();
+    if (g.phase === 'power') { const pg = ctx.createLinearGradient(W / 2 - 160, 0, W / 2 + 160, 0); pg.addColorStop(0, '#66bb6a'); pg.addColorStop(0.7, '#ffca28'); pg.addColorStop(1, '#e53935'); ctx.fillStyle = pg; rr(W / 2 - 160, H - 58, Math.max(10, 320 * g.power / 100), 22, 11); ctx.fill(); }
+    drawPuttUI(g, H0);
+    const aimTxt = Math.abs(t.aim) < 0.25 ? '瞄洞正中' : `往${t.aim > 0 ? '右' : '左'} ${Math.abs(t.aim).toFixed(1)}°`;
+    if (g.phase === 'aim') {
+      if (!G.capture) { drawBtn(W / 2 - 150, H - 112, 64, 40, '◀', () => golfTdTurn(-0.5), '#37474f'); drawBtn(W / 2 + 86, H - 112, 64, 40, '▶', () => golfTdTurn(0.5), '#37474f'); }
+      txt(aimTxt, W / 2, H - 86, 17, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
+      txt(isTouch ? '◀ ▶ 調方向，點畫面開始推桿' : '← → 調方向，空白鍵開始推桿', W / 2, H - 66, 13, '#fff', 'center', { stroke: '#1b5e20', sw: 3, weight: 'normal' });
+    } else txt(`${aimTxt}｜空白鍵：決定力道（虛線＝平地會滾多遠）`, W / 2, H - 70, 14, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
+  }
+  if (g.phase === 'fly' && t.n > 8 && FC % 50 < 36) txt(isTouch ? '⏩ 點一下直接看結果' : '⏩ 空白鍵直接看結果', W / 2, H - 70, 15, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
+}
+function drawTdProfile(g, H0) {                                  // 右上：沿著瞄準線的高低剖面
+  const t = g.td, L = Math.hypot(H0.hole - t.u, t.v) + 30, [du, dv] = golfTdDir(H0, t, t.aim), e0 = golfTdElev(H0, t.u, t.v);
+  const px = W - 312, py = 58, pw = 292, ph = 96, X = s => px + 14 + s / L * (pw - 28), Y = s => py + 58 + clamp((e0 - golfTdElev(H0, t.u + du * s, t.v + dv * s)) * 6, -30, 28);
+  ctx.fillStyle = 'rgba(10,40,20,.82)'; rr(px, py, pw, ph, 10); ctx.fill();
+  txt('📐 瞄準線剖面（高低差放大）', px + 12, py + 18, 12, '#c8e6c9', 'left', { weight: 'normal' });
+  ctx.lineWidth = 3; for (let s = 0; s < L; s += 3) { const de = golfTdElev(H0, t.u + du * (s + 3), t.v + dv * (s + 3)) - golfTdElev(H0, t.u + du * s, t.v + dv * s); ctx.strokeStyle = de > 0.02 ? '#ff8a80' : de < -0.02 ? '#64b5f6' : '#a5d6a7'; ctx.beginPath(); ctx.moveTo(X(s), Y(s)); ctx.lineTo(X(s + 3), Y(s + 3)); ctx.stroke(); }
+  ctx.fillStyle = '#fff'; circ(X(0), Y(0) - 4, 4); ctx.fill();
+  const [gu, gv] = golfTdGrad(H0, H0.hole, 0), side = gv * (t.u <= H0.hole ? 1 : -1), dh = golfTdElev(H0, H0.hole, 0) - e0, cm = Math.round(Math.abs(dh) * 15 / 5) * 5;
+  txt(`距洞 ${(Math.hypot(H0.hole - t.u, t.v) / 6).toFixed(1)} 碼｜${Math.abs(dh) < 0.4 ? '幾乎平的' : (dh > 0 ? '⬆ 上坡 ' : '⬇ 下坡 ') + cm + ' 公分'}｜${(GOLF_STIMP[H0.stimp || 'mid'] || GOLF_STIMP.mid).name}`, px + 12, py + ph - 10, 12, '#fff');
+  txt(Math.abs(side) < 0.01 ? '洞口附近：沒什麼側坡' : `洞口附近：${side > 0 ? '右邊高，球會往左彎' : '左邊高，球會往右彎'}`, px + 12, py + 36, 11, '#ffe082', 'left', { weight: 'normal' });
+}
+function golfDrawPops(g, toS) {                                 // 跳出來的大字（toS 為 null 時只畫螢幕座標的）
+  for (const tx of g.fx.txt) {
+    if (!tx.screen && !toS) continue;
+    const [x, y] = tx.screen ? [tx.x, tx.y] : toS(tx.x, tx.y), k = tx.t < 8 ? 0.3 + tx.t / 8 * 1.0 : tx.t < 14 ? 1.3 - (tx.t - 8) / 6 * 0.3 : 1, al = Math.min(1, (tx.life - tx.t) / 14);
+    ctx.save(); ctx.globalAlpha = al; ctx.translate(x, y - (tx.screen ? 0 : tx.t * 0.4)); ctx.scale(k, k); ctx.rotate(tx.burst ? -0.06 : 0);
+    if (tx.burst) { ctx.font = `bold ${tx.size}px ${FONT}`; const w = ctx.measureText(tx.s).width / 2 + 34, h = tx.size * 1.15; ctx.fillStyle = tx.burst; ctx.beginPath();
+      for (let i = 0; i < 28; i++) { const a = i / 28 * Math.PI * 2, r = i % 2 ? 0.78 : 1.06; ctx.lineTo(Math.cos(a) * w * r, Math.sin(a) * h * r); } ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke(); }
+    txt(tx.s, 0, tx.size * 0.36, tx.size, tx.col, 'center', { stroke: '#1b1b1b', sw: Math.max(3, tx.size / 6) });
+    ctx.restore();
+  }
+}
+function drawGolfHud(g, H0) {                                    // 俯瞰模式用的上方資訊＋按鈕
+  const fx = g.fx || {};
+  if (fx.txt) golfDrawPops(g, null);
+  if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${fx.flash * 0.7})`; ctx.fillRect(0, 0, W, H); }
+  if (g.ffFlash > 0) { g.ffFlash--; ctx.fillStyle = `rgba(255,255,255,${g.ffFlash / 16 * 0.35})`; ctx.fillRect(0, 0, W, H); txt('⏩ 略過', W / 2, H / 2, 34, '#fff', 'center', { stroke: '#1b5e20', sw: 6 }); }
+  if ((g.phase === 'aim' || g.phase === 'fly') && !G.capture) drawBtn(W - 160, H - 92, 140, 32, META.golfFF ? '⏩ 滾動：自動略過' : '👀 滾動：看完', () => { META.golfFF = !META.golfFF; saveMeta(); SFX.coin(); }, META.golfFF ? '#00897b' : '#546e7a');
+  ctx.fillStyle = 'rgba(27,94,32,.88)'; rr(10, 10, W - 20, 40, 12); ctx.fill();
+  const meT = g.me.reduce((a, c) => a + (c || 0), 0), bT = g.claim.reduce((a, c) => a + (c || 0), 0);
+  txt(`⛳ ${g.wx ? GOLF_WX[g.wx].icon + ' ' : ''}${H0.name}｜Par ${H0.par}｜這洞第 ${g.strokes} 桿`, 26, 37, 16, '#fff');
+  txt(`總桿：你 ${meT}／老闆「${bT}」`, W - 120, 37, 15, '#e8f5e9', 'right');
+  if (g.msgT > 0 && g.msg) txt(g.msg, W / 2, 140, 20, '#fff', 'center', { stroke: '#1b5e20', sw: 6 });
+  if (g.caddieT > 0 && g.caddie) txtFit('🍊「' + g.caddie + '」', W - 170, H - 132, 300, 14, '#ffe0b2', 'center', { stroke: '#3e2723', sw: 4 });
+  if (!G.capture) drawBtn(W - 120, H - 50, 100, 34, '◀ 不打了', golfExit, '#455a64');
 }
 
 // ---------- 每日關卡流程 ----------
@@ -6255,6 +7290,7 @@ function drawCalendar() {
     } else if (open) {
       if (FC % 60 < 42) txt('▶ 今天', x + w / 2, y + 92, 16, '#e65100', 'center');
     } else txt('🔒', x + w / 2, y + 94, 22, '#000', 'center');
+    if (META.golfDays && META.golfDays[n]) txt(META.golfDays[n].perfect ? '⛳✨' : '⛳', x + w - 6, y + h - 8, 12, '#2e7d32', 'right');
     if (!G.capture) G.ui.push({ x, y, w, h, fn: () => calPick(n) });
   }
   const msg = c.msg || (dayOpen(c.sel) ? `Day ${c.sel}：${DAYS[c.sel - 1].name}　${dayDone(c.sel) ? '（已打卡，可以重玩）' : ''}` : '一天只開放一關：今天打卡，明天再來 🙂');
@@ -6262,6 +7298,7 @@ function drawCalendar() {
   drawBtn(24, H - 50, 150, 36, '◀ 回標題', goTitle, '#6d4c41');
   if (dayOpen(c.sel)) drawBtn(W - 214, H - 50, 190, 36, `▶ 上班：Day ${c.sel}`, () => calPick(c.sel), '#e65100');
   if (stampCount() >= 30) drawBtn(190, H - 50, 170, 36, '🎬 全勤謝幕', openParade, '#8e1b1b');
+  if (dayDone(c.sel)) drawBtn(W - 444, H - 50, 220, 36, `⛳ Day ${c.sel} 一洞：${golfDayTheme(c.sel).name}`, () => openGolfDay(c.sel), '#2e7d32');
 }
 function drawDayClear() {
   const d = G.dc, D = DAYS[d.n - 1];
@@ -6281,6 +7318,7 @@ function drawDayClear() {
     ctx.save(); ctx.translate(8, 8); rr(0, 0, 220, 125, 2); ctx.clip(); ctx.scale(220 / W, 125 / H); drawSelfie(d); ctx.restore();
     txt('打卡自拍 📸', 118, 156, 14, '#5d4037', 'center'); ctx.restore(); ctx.globalAlpha = 1; }
   if (G.stateT > 40 && !G.capture) drawBtn(W / 2 + 40, 292, 200, 32, '📸 存下打卡自拍', saveSelfie, '#00897b');
+  if (G.stateT > 40 && !G.capture) drawBtn(W / 2 - 270, 292, 220, 32, `⛳ 今日一洞：${golfDayTheme(d.n).name}`, () => openGolfDay(d.n), '#2e7d32');
   const lines = [
     `🕘 ${fmtClock(G.clock)} 打卡${late ? `（加班 ${Math.floor(d.ot / 60)} 小時 ${d.ot % 60} 分）` : '下班'}　🏆 ${d.score}`,
     `🍇 葡萄 +${d.grapes} 存進存摺（共 ${META.bank}）`,
