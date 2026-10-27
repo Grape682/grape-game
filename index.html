@@ -5481,7 +5481,11 @@ function drawMengpo() {
   txt('奈何橋', 210, 420, 14, 'rgba(255,205,210,.6)', 'center');
   for (let i = 0; i < 4; i++) { const x = 380 + i * 50, y = 462 - Math.sin(((380 + i * 50) / 620) * Math.PI) * 42 + Math.sin(t * 0.05 + i) * 3;
     ctx.globalAlpha = 0.3; ctx.fillStyle = '#e0f7fa'; circ(x, y - 30, 8); ctx.fill(); rr(x - 8, y - 22, 16, 20, 6); ctx.fill(); ctx.globalAlpha = 1; }
-  txt('（排隊中：第 87 號・聽說都是來看店長的）', 440, 404, 11, 'rgba(224,247,250,.55)', 'center', { weight: 'normal' });
+  { const sx = 455, sy = 462;                                  // 排隊號碼牌（放在鬼魂下面，不會被擋住）
+    ctx.strokeStyle = '#5d3a2a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(sx, sy - 14); ctx.lineTo(sx, sy); ctx.stroke();
+    ctx.fillStyle = 'rgba(30,18,40,.85)'; rr(sx - 92, sy, 184, 46, 8); ctx.fill(); ctx.strokeStyle = 'rgba(255,213,79,.7)'; ctx.lineWidth = 1.5; ctx.stroke();
+    txt('🎫 排隊中：第 87 號', sx, sy + 19, 13, '#ffe082', 'center');
+    txt('（聽說都是來看店長的）', sx, sy + 38, 12, '#e0f7fa', 'center', { weight: 'normal' }); }
   for (let i = 0; i < 3; i++) { const x = 250 + i * 150, y = 354 + Math.sin(t * 0.03 + i) * 4; ctx.fillStyle = 'rgba(255,138,128,.2)'; circ(x, y, 28); ctx.fill(); ctx.fillStyle = '#c62828'; ell(x, y, 13, 16); ctx.fill(); txt('冥', x, y + 5, 12, '#ffd54f', 'center'); }
   for (let i = 0; i < 5; i++) { ctx.fillStyle = 'rgba(200,230,240,.07)'; ell(((i * 260 + t * 0.4) % (W + 400)) - 200, 480 + (i % 2) * 20, 260, 40); ctx.fill(); }
   // 孟婆立繪（右邊，輕輕呼吸）
