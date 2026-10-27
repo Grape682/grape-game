@@ -1147,6 +1147,7 @@ function loadLevel(idx, useCP) {
   if (LV.secret) LV.sub = LV.mission = fridayLine();
   enemies = []; items = []; props = []; projs = []; parts = []; pops = []; bumps = []; objs = []; boss = null;
   LV.ents.forEach(spawnEnt);
+  G.meet = null; placeOddCoworkers(idx);                   // 奇葩同事
   const sx = (useCP && G.cp != null) ? G.cp : LV.spawn;
   P = newPlayer(sx);
   props.forEach(p => { if (p.type === 'check' && p.tx === G.cp && useCP) p.on = true; });
@@ -1252,7 +1253,7 @@ function confirmAct() {
     case 'bubble': exitBubble(); break;
   }
 }
-function goTitle() { G.state = 'title'; G.stateT = 0; LV = null; G.daily = 0; G.bro = null; G.cine = null; playSong('title'); }
+function goTitle() { G.meet = null; G.state = 'title'; G.stateT = 0; LV = null; G.daily = 0; G.bro = null; G.cine = null; playSong('title'); }
 function openAch(back) { G.achBack = back || 'title'; G.state = 'ach'; G.stateT = 0; }
 function closeAch() { if (G.achBack === 'review' && G.review) { G.state = 'review'; G.stateT = 0; } else goTitle(); }
 
@@ -1485,16 +1486,22 @@ function updateCam(snap) {
 
 // ---------- 玩家 ----------
 function updatePlayer() {
+  if (G.meet) { meetStep(); return; }                     // 被拉進會議：動不了
   let dir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
   if (G.fx.reverse > 0) dir = -dir;                       // 需求變更：左右對調
   if (G.rescueT > 0) { G.rescueT--; dir = 0; }            // 剛被撈起來：先站穩
   P.typing = keys.down && P.onGround;                     // 按住 ↓：假裝打字（不能動）
+  if (P.noHide > 0) { P.noHide--; P.typing = false; }       // 被馬屁精推出去：躲不了
   if (P.typing) dir = 0;
   const hyper = G.fx.hyper > 0;
-  const maxv = (G.fx.slow > 0 ? 1.7 : hyper ? 6.2 : P.star > 0 ? 4.6 : 3.8) - 0.25 * P.load + (G.items.slippers || fortune() === 'fast' ? 0.45 : 0);
-  const acc = (P.onGround ? 0.55 : 0.38) * (hyper ? 1.7 : 1);
+  let maxv = (G.fx.slow > 0 ? 1.7 : hyper ? 6.2 : P.star > 0 ? 4.6 : 3.8) - 0.25 * P.load + (G.items.slippers || fortune() === 'fast' ? 0.45 : 0);
+  let acc = (P.onGround ? 0.55 : 0.38) * (hyper ? 1.7 : 1);
+  const zone = P.zone = oddZoneAt(P.x + P.w / 2);              // 冷氣戰爭／咖哩味
+  if (zone === 'ice' && P.onGround) acc *= 0.3;
+  if (zone === 'heat') { maxv *= 0.6; if (FC % 70 === 0) popup(P.x + P.w / 2, P.y - 12, pick(['好熱…', '💦', '融化了…']), '#ffab91', 12); }
+  if (zone === 'gas') { maxv *= 0.5; acc *= 0.7; if (FC % 50 === 0) { popup(P.x + P.w / 2, P.y - 12, pick(['咳咳！', '咳…好嗆', '誰在吃咖哩！']), '#dce775', 13); SFX.bump(); } }
   if (dir) { P.vx += dir * acc; P.face = dir; }
-  else { P.vx *= P.onGround ? 0.75 : 0.94; if (Math.abs(P.vx) < 0.05) P.vx = 0; }
+  else { P.vx *= P.onGround ? (zone === 'ice' ? 0.985 : 0.75) : 0.94; if (Math.abs(P.vx) < 0.05) P.vx = 0; }
   P.vx = P.inv > 60 ? clamp(P.vx, -5, 5) : clamp(P.vx, -maxv, maxv);
   if (G.fx.drunk > 0) {                                   // 被灌醉：走路歪來歪去
     P.vx += Math.sin(FC * 0.045) * 0.32;
@@ -1804,6 +1811,7 @@ function updateEnemies() {
     if (G.friday && Math.floor(e.t) % 3 === 0) continue;                    // 週五下午：怪物懶洋洋（慢 1/3）
     if (e.x < cam.x - 700) { e.alive = false; e.dieT = 999; continue; }
     if (e.spawnT > 0) e.spawnT--;
+    if (e.type === 'odd') { updateOdd(e, asleep); continue; }
     if (e.type === 'cowork') { updateCoworker(e, asleep); continue; }
     if (e.type === 'drinker') { updateDrinker(e, asleep); continue; }
     if (e.origin && !asleep) updateOrigin(e);
@@ -1958,6 +1966,7 @@ function makeDrunk() {
   if (P.sanity <= 0) { P.sanity = 0; die('drunk'); }
 }
 function killEnemy(e, how) {
+  if (e.type === 'odd') { oddLeave(e, pick(['（被嚇跑了）', '我、我先去開會了！', '這不是我的錯！']), how === 'stomp' ? 'leave' : 'flip'); return; }
   if (e.type === 'cowork') { refuseCoworker(e); return; }
   if (e.alive) getCard(e.type === 'email' ? (e.phish ? 'phish' : 'email') : e.type);
   if (e.origin && e.alive) endStorm(e);
@@ -1975,6 +1984,7 @@ function impact(x, y, big) {
   }
 }
 function stompEnemy(e) {
+  if (e.type === 'odd') { addRage(4); oddStomp(e); return; }
   buzz(15);
   P.combo++; addRage(4); G.stats.stomps++; broCount();
   const pts = 100 * P.combo; G.score += pts;
@@ -3506,6 +3516,7 @@ function drawDrinker(e) {
   if (LV && enemyIdle() && e.alive && !e.say) drawIdleIcon(e);
 }
 function drawEnemy(e) {
+  if (e.type === 'odd') return drawOdd(e);
   if (e.type === 'cowork') return drawCoworker(e);
   if (e.type === 'drinker') return drawDrinker(e);
   ctx.save();
@@ -4740,7 +4751,7 @@ function render() {
   drawTiles(); drawLvSpikes(); drawObjs(); drawProps(); drawItems();
   for (const e of enemies) if (e.x > cam.x - 80 && e.x < cam.x + W + 80) { drawEnemy(e); if (G.friday && e.alive && e.type !== 'cowork') { const ic = ['💤', '🍹', '🏖️'][Math.floor(e.x / 97) % 3]; ctx.globalAlpha = 0.85; txt(ic, e.x + e.w / 2 + Math.sin(FC * 0.05 + e.x) * 4, e.y - 10 - (FC * 0.3 + e.x) % 14, 14, '#000', 'center'); ctx.globalAlpha = 1; } }
   if (boss) { drawBoss(boss); if (boss.broStunT > 0 && boss.state !== 'dead') for (let i = 0; i < 4; i++) { const a = FC * 0.1 + i * 1.57; txt('★', boss.x + boss.w / 2 + Math.cos(a) * 30, boss.y - 6 + Math.sin(a) * 7, 16, '#ffd54f', 'center', { stroke: '#5d4037', sw: 3 }); } }
-  drawPlayer(); drawProjs(); drawParts();
+  drawPlayer(); drawMeet(); drawProjs(); drawParts();
   ctx.restore();
   drawWeatherFront();
   if (G.state === 'play' && P.sanity < 25) { ctx.save(); ctx.globalCompositeOperation = 'saturation'; ctx.fillStyle = `rgba(128,128,128,${Math.min(0.85, (25 - P.sanity) / 25 * 0.9)})`; ctx.fillRect(0, 0, W, H); ctx.restore(); }
@@ -5091,6 +5102,12 @@ const CARDS = [
   ['mengpo', '🥣', '孟婆', '奈何橋店長（顏值擔當）', '讓你忘記加班', '「別盯著我看，湯要涼了」'],
   ['caddie', '🏌️', '桿弟', '高爾夫球場桿弟', '喊「好球！」', '「老闆好球！！（球在哪？）」'],
   ['weather', '🌦️', '氣象主播', '球場氣象特派員', '預報永遠不準', '「午後有雷陣雨（老闆說不算）」'],
+  ['lemon', '🍋', '檸檬', '功勞小偷', '把你的成果說成他的', '「這個是我做的喔～」'],
+  ['coconut', '🥥', '椰子', '會議召集人', '把 5 分鐘變 2 小時', '「耽誤你 5 分鐘就好」'],
+  ['peach', '🍑', '水蜜桃', '老闆特助（自封）', '拍馬屁、打小報告', '「老闆今天氣色真好～」'],
+  ['pear', '🍐', '洋梨', '資料管理員', '已讀不回', '「等一下喔～」'],
+  ['banana', '🍌', '香蕉', '空調委員會', '冷氣遙控器搶奪戰', '「好熱喔，我調一下」'],
+  ['chili', '🌶️', '辣椒', '茶水間常駐', '微波爐咖哩', '「整層樓都聞到了？好香吧！」'],
   ['grape', '🍇', '阿葡（你）', '資深社畜', '準時下班（偶爾）', '「我只想下班」'],
 ];
 function getCard(id) {
@@ -7649,6 +7666,244 @@ function drawGolfCine(g) {
   }
 }
 
+// ---------- 🤪 奇葩同事：功勞小偷、會議狂人、馬屁精、已讀不回、冷氣戰爭、微波爐咖哩 ----------
+const ODD = {
+  lemon:   { name: '檸檬', title: '功勞小偷', w: 24, h: 32, col: '#fff176', dark: '#f9a825', speed: 0.6, hi: ['這個是我做的喔～', '老闆，這份報告是我熬夜做的！'] },
+  coconut: { name: '椰子', title: '會議狂人', w: 28, h: 30, col: '#8d6e63', dark: '#4e342e', speed: 0.35, hi: ['耽誤你 5 分鐘就好', '我們先開個短會對齊一下'] },
+  peach:   { name: '水蜜桃', title: '馬屁精', w: 26, h: 30, col: '#f8bbd0', dark: '#ec407a', speed: 0.5, hi: ['借過一下，我要去跟老闆報告', '老闆今天氣色真好～'] },
+  pear:    { name: '洋梨', title: '已讀不回', w: 24, h: 34, col: '#c5e1a5', dark: '#7cb342', speed: 0, hi: ['等一下喔～', '已讀 ✓✓'] },
+  banana:  { name: '香蕉', title: '冷氣戰爭', w: 20, h: 36, col: '#ffee58', dark: '#f9a825', speed: 0, hi: ['好熱喔，我調一下', '誰又把冷氣調高了！'] },
+  chili:   { name: '辣椒', title: '微波爐咖哩', w: 18, h: 36, col: '#e53935', dark: '#b71c1c', speed: 0, hi: ['今天中午吃咖哩！', '微波 3 分鐘就好～'] },
+};
+const ODD_STORY = [['lemon', 'coconut'], ['pear', 'banana', 'lemon'], ['chili', 'peach', 'coconut'], ['peach', 'banana', 'chili', 'pear']];
+function oddKindsFor(idx) {
+  if (LV.secret || LV.arena && !LV.daily && idx > 3) return [];
+  if (LV.daily) { const r = mulberry(LV.daily * 53 + 11), all = Object.keys(ODD), out = []; const n = DAYS[LV.daily - 1].boss ? 1 : 2;
+    while (out.length < n) { const k = all[Math.floor(r() * all.length)]; if (!out.includes(k)) out.push(k); } return out; }
+  return ODD_STORY[idx] || [];
+}
+function oddSpotOk(c, half, gateCols) {
+  const end = (LV.arena ? LV.arena.x0 - 8 : (LV.roomX != null ? LV.roomX : LV.w)) - 10;
+  if (c - half < LV.spawn + 10 || c + half + gateCols > end) return false;
+  for (let x = c - half; x <= c + half + gateCols; x++) { if (!isSolid(tileAt(x, 15)) || tileAt(x, 15) === 5) return false; if (isSolid(tileAt(x, 14)) || tileAt(x, 14) === 5) return false; }   // 平地（區域可以有桌子、平台）
+  for (let x = c - 1; x <= c + 1 + gateCols; x++) for (let y = 11; y <= 14; y++) if (tileAt(x, y) !== 0) return false;                      // 本人和門的位置要空
+  const box = { x: c * T - 4, y: 11 * T, w: (1 + gateCols) * T + 8, h: 4 * T };
+  if (props.some(p => !['tip', 'sign', 'spot'].includes(p.type) && overlap(box, p)) || objs.some(o => overlap(box, o)) || items.some(i => i.type !== 'grape' && overlap(box, i))) return false;
+  if (enemies.some(e => Math.abs(e.x / T - c) < 3)) return false;
+  return true;
+}
+function placeOddCoworkers(idx) {
+  const kinds = oddKindsFor(idx); if (!kinds.length) return;
+  const end = (LV.arena ? LV.arena.x0 - 8 : (LV.roomX != null ? LV.roomX : LV.w)) - 10, start = LV.spawn + 12, seg = (end - start) / kinds.length;
+  kinds.forEach((k, i) => {
+    const half = k === 'banana' || k === 'chili' ? 5 : 2, gate = k === 'pear' ? 3 : 0, mid = Math.round(start + seg * (i + 0.5));
+    for (let pass = 0; pass < 3; pass++) for (let d = 0; d < (pass ? end - start : seg / 2 + 6); d++) for (const c of [mid + d, mid - d]) {   // 先找自己那一段，找不到再全關卡找（區域也可以窄一點）
+      if (!oddSpotOk(c, pass === 2 ? Math.min(half, 3) : half, gate)) continue;
+      const O = ODD[k], e = { type: 'odd', kind: k, w: O.w, h: O.h, x: c * T + (T - O.w) / 2, y: 15 * T - O.h, vx: 0, vy: 0, face: -1, speed: O.speed,
+        alive: true, dieT: 0, active: false, t: Math.random() * 100, onGround: true, cool: 0, home: c * T, st: 'idle', stT: 0 };
+      if (k === 'pear') e.gate = { x: (c + 2) * T + 4, y: 15 * T - 112, w: 22, h: 112, open: 0, wait: 0 };
+      if (k === 'banana') { e.zone = [(c - 5) * T, (c + 6) * T]; e.ac = 'normal'; e.acT = 200; }
+      if (k === 'chili') { e.zone = [(c - 4) * T, (c + 6) * T]; e.mw = 'idle'; e.mwT = 240; }
+      enemies.push(e); return;
+    }
+  });
+}
+// ---- 每格更新 ----
+function oddSay(e, s, t = 200) { e.say = { text: s, t }; if (onScreen(e)) chatter('caddie', 3); }
+function oddLeave(e, line, how = 'leave') {
+  if (!e.alive) return;
+  e.alive = false; e.how = how; e.dieT = 0; e.face = (e.x + e.w / 2 > P.x + P.w / 2) ? 1 : -1; e.vx = e.face * 2.6; e.vy = how === 'leave' ? 0 : -7;
+  if (line) e.say = { text: line, t: STORY_MIN };
+  if (e.gate) e.gate.open = 1;
+  if (e.kind === 'chili') e.gas = 0;
+  if (e.kind === 'lemon' && e.stolen) { G.grapes += e.stolen; popup(P.x + P.w / 2, P.y - 40, `+${e.stolen} 🍇 功勞拿回來了！`, '#e1bee7', 15); e.stolen = 0; }
+  if (G.meet && G.meet.e === e) meetEnd(false);
+  G.score += 250; getCard(e.kind); SFX.refuse();
+  popup(e.x + e.w / 2, e.y - 34, '+250', '#ffd54f', 14); burst(e.x + e.w / 2, e.y, '#ffe082', 8, 2);
+}
+function oddStomp(e) {
+  P.vy = keys.jump ? -11 : -7.5; G.hitstop = 4; impact(e.x + e.w / 2, e.y + 6, false); SFX.stomp(1); P.combo++; G.stats.stomps++; broCount();
+  const L = { lemon: e.stolen ? '對不起…是你做的，是你做的！' : '我、我只是路過！', coconut: '好啦，這個會改成 email 好了', peach: '老闆救我！有人欺負我！',
+    banana: '好啦好啦，冷氣不調了', chili: '咖哩我帶去外面吃…', pear: null }[e.kind];
+  if (e.kind === 'pear') { e.dizzy = 90; oddSay(e, '踩我也沒用，系統在跑…（轉圈圈）', STORY_MIN); getCard('pear'); return; }
+  if (e.kind === 'banana') e.ac = 'off';
+  if (e.kind === 'chili') e.mw = 'off';
+  oddLeave(e, L);
+}
+function updateOdd(e, asleep) {
+  const O = ODD[e.kind], dx = (P.x + P.w / 2) - (e.x + e.w / 2), near = Math.abs(dx) < 300 && Math.abs(P.y - e.y) < 160;
+  if (e.say && --e.say.t <= 0) e.say = null;
+  if (e.cool > 0) e.cool--; if (e.dizzy > 0) e.dizzy--;
+  if (near && !e.met) { e.met = true; oddSay(e, pick(O.hi)); }
+  let vx = 0;
+  if (e.kind === 'lemon') {
+    if (e.st === 'flee') { vx = e.face * 2.6; if (--e.stT <= 0) { e.st = 'idle'; oddSay(e, '（假裝在忙）', 150); } }
+    else vx = asleep ? 0 : e.face * O.speed;
+  } else if (e.kind === 'coconut') { vx = asleep || G.meet ? 0 : e.face * O.speed; if (near && !G.meet) e.face = dx > 0 ? 1 : -1; }
+  else if (e.kind === 'peach') {
+    const boss = G.patrol && ['warn', 'watch'].includes(G.patrol.phase);
+    if (boss) { e.face = dx > 0 ? 1 : -1; vx = near ? e.face * 2.4 : 0; if (!e.bossLine) { e.bossLine = true; oddSay(e, '老闆！老闆！我在這裡！阿葡在摸魚喔～', STORY_MIN); } }
+    else { e.bossLine = false; vx = asleep ? 0 : e.face * O.speed; }
+  } else if (e.kind === 'pear') { e.face = dx > 0 ? 1 : -1; oddPearGate(e); }
+  else if (e.kind === 'banana') { e.face = dx > 0 ? 1 : -1; oddBanana(e); }
+  else if (e.kind === 'chili') { e.face = dx > 0 ? 1 : -1; oddChili(e); }
+  e.vx = vx; e.vy = Math.min(e.vy + 0.5, 10); moveBody(e, true);
+  if (e.speed) {
+    if (e.hitWall) e.face *= -1;
+    else if (e.onGround && vx !== 0) { const ax = e.face > 0 ? e.x + e.w + 1 : e.x - 1, t = tileAt(Math.floor(ax / T), Math.floor((e.y + e.h + 2) / T)); if (!isSolid(t) && t !== 7) e.face *= -1; }
+    if (Math.abs(e.x - e.home) > 9 * T && e.st !== 'flee') e.face = e.x > e.home ? -1 : 1;      // 不會走離自己的座位太遠
+  }
+  if (e.y > LV.h * T + 60) { e.alive = false; e.dieT = 999; return; }
+  if (G.state !== 'play' || G.meet || !overlap(shrink(P, 1), shrink(e, 2))) return;
+  if (P.star > 0) { oddLeave(e, '你都要離職了，我不鬧你了', 'flip'); return; }
+  if (P.vy > 0 && (P.y + P.h) - e.y <= Math.max(12, P.vy + 8)) { oddStomp(e); return; }
+  const bossNow = G.patrol && ['warn', 'watch'].includes(G.patrol.phase);
+  if ((asleep && !(e.kind === 'peach' && bossNow)) || e.cool > 0) return;
+  const push = s => { P.vx = s; P.vy = Math.min(P.vy, -3.5); };
+  if (e.kind === 'lemon') {
+    getCard('lemon');
+    if (G.grapes > 0 && e.st !== 'flee') { const n = Math.min(5, G.grapes); G.grapes -= n; e.stolen = (e.stolen || 0) + n; e.st = 'flee'; e.stT = 300; e.face = dx > 0 ? -1 : 1;
+      oddSay(e, '這個是我做的喔～', STORY_MIN); popup(P.x + P.w / 2, P.y - 20, `-${n} 🍇 功勞被搶走了！踩他拿回來！`, '#ffab91', 14); SFX.nope(); }
+    else if (e.st !== 'flee') oddSay(e, '你今天什麼都沒做喔？', 160);
+    e.cool = 120;
+  } else if (e.kind === 'coconut') { if (!G.meet && !(P.inv > 0)) meetStart(e); }
+  else if (e.kind === 'peach') { const boss = G.patrol && ['warn', 'watch'].includes(G.patrol.phase); push(boss ? 6.5 : -Math.sign(dx || 1) * 5);
+    if (boss) { P.noHide = 70; oddSay(e, '老闆您看！阿葡在這裡！（把你推出去）', STORY_MIN); } else oddSay(e, pick(['借過一下，我要去跟老闆報告', '你擋到我拍老闆馬屁了']), 180);
+    getCard('peach'); SFX.bump(); e.cool = 70; }
+  else if (e.kind === 'pear') { push(-Math.sign(dx || 1) * 3.5); if (!e.say) oddSay(e, '等一下喔～', 120); e.cool = 50; }
+  else { push(-Math.sign(dx || 1) * 3); e.cool = 50; }
+}
+// 已讀不回：門要等 10 秒（或從上面翻過去）
+function oddPearGate(e) {
+  const g = e.gate; if (!g) return;
+  if (g.open > 0) { g.open = Math.min(1, g.open + 0.04); return; }
+  const near = P.x + P.w > e.x - 150 && P.x < g.x + g.w + 40 && Math.abs(P.y + P.h - (e.y + e.h)) < 80;
+  if (near) { g.wait++; if (g.wait === 1) { oddSay(e, '你要的資料喔？等一下喔～（已讀）', STORY_MIN); getCard('pear'); } if (g.wait === 300) oddSay(e, '（輸入中…）', 200); }
+  if (g.wait >= 600) { g.open = 0.01; oddSay(e, '給你～（附件忘了附）', STORY_MIN); SFX.ding(); G.score += 100; popup(g.x + 10, g.y - 10, '門開了！（等了 10 秒）', '#b9f6ca', 14); }
+  if (g.open <= 0 && overlap(P, g)) {                       // 門是關的：擋住（從上面跳過去可以）
+    if (P.y + P.h - P.vy <= g.y + 4 && P.vy >= 0) { P.y = g.y - P.h; P.vy = 0; P.onGround = true; }
+    else { const left = P.x + P.w / 2 < g.x + g.w / 2; P.x = left ? g.x - P.w : g.x + g.w; P.vx = 0; }
+  }
+}
+// 冷氣戰爭：正常 → 16 度（結冰）→ 30 度（熱浪）
+function oddBanana(e) {
+  if (e.ac === 'off') return;
+  if (--e.acT > 0) return;
+  if (e.ac === 'normal') { e.ac = 'cold'; e.acT = 420; oddSay(e, '好熱喔，我把冷氣調到 16 度～', STORY_MIN); if (onScreen(e)) SFX.change(); }
+  else if (e.ac === 'cold') { e.ac = 'hot'; e.acT = 360; oddSay(e, '（隔壁同事：好冷！誰調的！→ 調成 30 度）', STORY_MIN); if (onScreen(e)) SFX.change(); }
+  else { e.ac = 'normal'; e.acT = 300; oddSay(e, '……我們還是都不要動好了', 200); }
+}
+// 微波爐咖哩：熱好之後整區都是味道
+function oddChili(e) {
+  if (e.mw === 'off') { if (e.gas > 0) e.gas -= 0.01; return; }
+  if (--e.mwT > 0) { if (e.mw === 'gas') e.gas = Math.min(1, (e.gas || 0) + 0.03); return; }
+  if (e.mw === 'idle') { e.mw = 'heat'; e.mwT = 150; oddSay(e, '微波 3 分鐘～（嗡嗡嗡）', 200); }
+  else if (e.mw === 'heat') { e.mw = 'gas'; e.mwT = 480; oddSay(e, '叮！好香喔～（整層樓都聞到了）', STORY_MIN); if (onScreen(e)) SFX.ding(); }
+  else { e.mw = 'idle'; e.mwT = 360; e.gas = 0; }
+  if (e.mw !== 'gas') e.gas = Math.max(0, (e.gas || 0) - 0.5);
+}
+function oddZoneAt(x) {                                            // 玩家所在的區域效果
+  let z = null;
+  for (const e of enemies) { if (e.type !== 'odd' || !e.zone || x < e.zone[0] || x > e.zone[1]) continue;
+    if (e.kind === 'chili' && e.gas > 0.4) z = 'gas'; else if (e.kind === 'banana' && e.alive && e.ac === 'cold' && !z) z = 'ice'; else if (e.kind === 'banana' && e.alive && e.ac === 'hot' && !z) z = 'heat'; }
+  return z;
+}
+// 會議泡泡：連打跳躍鍵逃出來（時間照樣在走）
+function meetStart(e) {
+  G.meet = { e, n: 0, need: 12, t: 0, line: '' }; e.cool = 999; P.typing = true; oddSay(e, '耽誤你 5 分鐘就好！（關門）', STORY_MIN); getCard('coconut');
+  P.vx = 0; SFX.event(); toast('🥥 被椰子拉進會議了！連打「跳躍」才逃得出來（時鐘照樣在走）', 300);
+}
+function meetStep() {
+  const m = G.meet; m.t++; P.vx = 0; P.vy = Math.min(P.vy + 0.55, 12); moveBody(P, true); if (P.onGround) P.vy = 0; P.typing = true;
+  if (jumpPressed) { m.n++; jumpPressed = false; SFX.bump(); popup(P.x + P.w / 2 + rand(-20, 20), P.y - 20, pick(['嗯嗯', '好', '有道理', '我回去確認', '這個再約', '+1', '（偷看手錶）']), '#fff', 12); }
+  if (m.t % 90 === 0) m.line = pick(['下一個議題：要不要再開一個會', '這頁簡報我們再對齊一下', '大家有沒有問題？（沒有人敢說話）', '那我們下週再開一次確認', 'Q3 目標我們再「拉齊」一下']);
+  if (m.n >= m.need || m.t > 720) meetEnd(m.n >= m.need);
+}
+function meetEnd(escaped) {
+  const m = G.meet; if (!m) return; G.meet = null; P.inv = 60; P.typing = false;
+  if (m.e.alive) { oddLeave(m.e, escaped ? '啊你先忙，會議記錄我再寄給你' : '好，那今天就先到這裡'); }
+  popup(P.x + P.w / 2, P.y - 30, escaped ? '成功逃離會議！' : '會議終於結束了…', '#b9f6ca', 15);
+}
+// ---- 畫面 ----
+function drawOddFace(x, y, s, mood) {
+  ctx.fillStyle = '#fff'; circ(x - 4 * s, y, 2.6 * s); ctx.fill(); circ(x + 4 * s, y, 2.6 * s); ctx.fill();
+  ctx.fillStyle = '#3e2723'; circ(x - 3.4 * s, y + 0.4 * s, 1.4 * s); ctx.fill(); circ(x + 4.6 * s, y + 0.4 * s, 1.4 * s); ctx.fill();
+  ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 1.3; ctx.beginPath();
+  if (mood === 'sly') { ctx.moveTo(x - 3 * s, y + 5 * s); ctx.quadraticCurveTo(x + 1 * s, y + 8 * s, x + 5 * s, y + 4 * s); }
+  else if (mood === 'flat') { ctx.moveTo(x - 3 * s, y + 6 * s); ctx.lineTo(x + 4 * s, y + 6 * s); }
+  else if (mood === 'sad') ctx.arc(x, y + 9 * s, 3 * s, 1.15 * Math.PI, 1.85 * Math.PI);
+  else ctx.arc(x, y + 4 * s, 3.2 * s, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
+}
+function drawOdd(e) {
+  const O = ODD[e.kind], leaving = !e.alive, cx = e.x + e.w / 2, by = e.y + e.h, t = e.t || 0;
+  // 區域效果（畫在人物後面）
+  if (e.zone) { const [z0, z1] = e.zone, top = 6 * T, hgt = by - top;
+    if (e.kind === 'banana' && e.alive && e.ac !== 'normal' && e.ac !== 'off') {
+      const cold = e.ac === 'cold'; ctx.fillStyle = cold ? 'rgba(129,212,250,.16)' : 'rgba(255,138,101,.16)'; ctx.fillRect(z0, top, z1 - z0, hgt);
+      if (cold) { ctx.fillStyle = 'rgba(225,245,254,.85)'; ctx.fillRect(z0, by - 3, z1 - z0, 4); for (let i = 0; i < 14; i++) { const fx = z0 + ((i * 53 + FC * 0.4) % (z1 - z0)), fy = top + ((i * 37 + FC * 0.9) % hgt); txt('❄', fx, fy, 10, '#e1f5fe', 'center'); } }
+      else { ctx.strokeStyle = 'rgba(255,171,64,.45)'; ctx.lineWidth = 1.5; for (let i = 0; i < 9; i++) { const fx = z0 + 20 + i * (z1 - z0 - 40) / 8; ctx.beginPath(); for (let k = 0; k < 6; k++) { const yy = by - 10 - k * 14 - (FC * 0.8 % 14); ctx.lineTo(fx + Math.sin(yy * 0.2 + FC * 0.1) * 4, yy); } ctx.stroke(); } }
+      txt(cold ? '❄ 冷氣 16°C' : '🔥 冷氣 30°C', (z0 + z1) / 2, top + 14, 12, cold ? '#01579b' : '#bf360c', 'center', { stroke: '#fff', sw: 3 });
+    }
+    if (e.kind === 'chili' && e.gas > 0) { ctx.globalAlpha = Math.min(1, e.gas) * 0.55;
+      for (let i = 0; i < 10; i++) { const gx = z0 + ((i * 71 + FC * 0.3) % (z1 - z0)), gy = by - 30 - ((i * 29 + FC * 0.25) % (hgt - 30)); ctx.fillStyle = i % 2 ? '#fff176' : '#d4e157'; circ(gx, gy, 18 + (i % 3) * 6); ctx.fill(); }
+      ctx.globalAlpha = 1; if (e.gas > 0.4) txt('🍛 咖哩味瀰漫中…', (z0 + z1) / 2, top + 14, 12, '#827717', 'center', { stroke: '#fff', sw: 3 }); }
+  }
+  if (e.kind === 'pear' && e.gate) { const g = e.gate, oy = g.h * g.open;                // 資料室的門
+    ctx.fillStyle = '#5d4037'; ctx.fillRect(g.x - 3, g.y - 6, g.w + 6, 6);
+    ctx.save(); ctx.beginPath(); ctx.rect(g.x - 2, g.y, g.w + 4, g.h); ctx.clip();
+    ctx.fillStyle = 'rgba(144,202,249,.75)'; ctx.fillRect(g.x, g.y - oy, g.w, g.h); ctx.strokeStyle = '#546e7a'; ctx.lineWidth = 2; ctx.strokeRect(g.x, g.y - oy, g.w, g.h);
+    ctx.fillStyle = '#fff'; rr(g.x - 1, g.y - oy + 30, g.w + 2, 24, 3); ctx.fill(); txt('資料', g.x + g.w / 2, g.y - oy + 41, 8, '#37474f', 'center'); txt('等一下', g.x + g.w / 2, g.y - oy + 51, 7, '#c62828', 'center');
+    ctx.restore();
+    if (e.alive && g.open <= 0 && g.wait > 0) { const left = Math.max(0, Math.ceil((600 - g.wait) / 60)); txt(`⏳ ${left}`, g.x + g.w / 2, g.y - 14, 13, '#fff', 'center', { stroke: '#37474f', sw: 3 }); } }
+  if (e.kind === 'chili') { const mx = e.home + 26, my = by - 26;                       // 微波爐
+    ctx.fillStyle = '#8d6e63'; ctx.fillRect(mx - 4, my + 14, 40, 12); ctx.fillStyle = '#eceff1'; rr(mx, my - 6, 32, 22, 3); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = e.mw === 'heat' ? `rgba(255,213,79,${0.6 + 0.3 * Math.sin(FC * 0.4)})` : '#37474f'; ctx.fillRect(mx + 3, my - 3, 19, 16); ctx.fillStyle = '#26a69a'; ctx.fillRect(mx + 25, my - 2, 4, 3); }
+  if (e.kind === 'banana') { const tx = e.home - 10, ty = by - 64;                        // 冷氣遙控面板
+    ctx.fillStyle = '#eceff1'; rr(tx, ty, 26, 18, 3); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1; ctx.stroke();
+    txt(e.ac === 'cold' ? '16°' : e.ac === 'hot' ? '30°' : '25°', tx + 13, ty + 13, 10, e.ac === 'cold' ? '#0277bd' : e.ac === 'hot' ? '#d84315' : '#455a64', 'center'); }
+  if (leaving) ctx.globalAlpha = clamp(1 - (e.dieT - 110) / 40, 0, 1);
+  ctx.save(); ctx.translate(cx, by); ctx.scale(e.face < 0 ? -1 : 1, 1); if (e.dizzy > 0) ctx.rotate(Math.sin(t * 0.5) * 0.15);
+  const walk = e.vx !== 0 || leaving, a = walk ? Math.sin(t * 0.35) * 4 : 0;
+  ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-4, -7); ctx.lineTo(-4 + a, 0); ctx.moveTo(4, -7); ctx.lineTo(4 - a, 0); ctx.stroke();
+  const H0 = O.h - 6, mid = -6 - H0 / 2;
+  ctx.fillStyle = O.col; ctx.strokeStyle = O.dark; ctx.lineWidth = 1.5;
+  if (e.kind === 'lemon') { ell(0, mid, 12, H0 / 2); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, mid - H0 / 2 - 4); ctx.lineTo(-3, mid - H0 / 2 + 2); ctx.lineTo(3, mid - H0 / 2 + 2); ctx.fill(); }
+  else if (e.kind === 'coconut') { circ(0, mid, 13); ctx.fill(); ctx.stroke(); ctx.fillStyle = '#3e2723'; for (const [px, py] of [[-4, -8], [4, -8], [0, -3]]) { circ(px, mid + py - 2, 1.4); ctx.fill(); } }
+  else if (e.kind === 'peach') { circ(0, mid, 13); ctx.fill(); ctx.strokeStyle = 'rgba(236,64,122,.5)'; ctx.beginPath(); ctx.moveTo(0, mid - 13); ctx.quadraticCurveTo(-4, mid, 0, mid + 12); ctx.stroke(); ctx.fillStyle = '#66bb6a'; ell(4, mid - 14, 5, 2.5, -0.5); ctx.fill(); }
+  else if (e.kind === 'pear') { ctx.beginPath(); ctx.ellipse(0, mid + 6, 12, 11, 0, 0, Math.PI * 2); ctx.ellipse(0, mid - 6, 8, 9, 0, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#6d4c41'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, mid - 15); ctx.lineTo(2, mid - 20); ctx.stroke(); }
+  else if (e.kind === 'banana') { ctx.beginPath(); ctx.moveTo(-3, -6); ctx.quadraticCurveTo(-14, mid, -2, -6 - H0); ctx.lineTo(4, -6 - H0 + 2); ctx.quadraticCurveTo(-4, mid, 7, -6); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle = '#5d4037'; ctx.fillRect(-3, -9 - H0, 5, 5); }
+  else if (e.kind === 'chili') { ctx.beginPath(); ctx.moveTo(-8, mid - H0 / 2 + 6); ctx.quadraticCurveTo(-10, mid + 8, 2, -5); ctx.quadraticCurveTo(10, mid + 2, 8, mid - H0 / 2 + 6); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle = '#43a047'; rr(-7, mid - H0 / 2 + 1, 14, 6, 3); ctx.fill(); ctx.fillRect(-1, mid - H0 / 2 - 4, 3, 6); }
+  const fy = mid - 2, mood = leaving ? 'sad' : e.kind === 'lemon' || e.kind === 'peach' ? 'sly' : e.kind === 'pear' || e.kind === 'coconut' ? 'flat' : 'happy';
+  drawOddFace(2, fy, 1, mood);
+  if (e.kind === 'peach') { ctx.fillStyle = 'rgba(255,82,82,.5)'; circ(-5, fy + 5, 2.2); ctx.fill(); circ(9, fy + 5, 2.2); ctx.fill(); }
+  // 識別證＋道具
+  ctx.fillStyle = '#fff'; ctx.fillRect(-5, mid + 4, 6, 7); ctx.strokeStyle = '#1e88e5'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-5, mid - 4); ctx.lineTo(-2, mid + 4); ctx.lineTo(1, mid - 4); ctx.stroke();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = '#3e2723'; ctx.beginPath(); ctx.moveTo(9, mid + 2); ctx.lineTo(15, mid + 6); ctx.stroke();
+  if (e.kind === 'coconut') { ctx.fillStyle = '#90a4ae'; rr(12, mid, 12, 9, 1); ctx.fill(); ctx.fillStyle = '#e3f2fd'; ctx.fillRect(13, mid + 1, 10, 6); }
+  if (e.kind === 'pear') { ctx.fillStyle = '#263238'; rr(13, mid - 2, 7, 11, 1.5); ctx.fill(); ctx.fillStyle = '#4fc3f7'; ctx.fillRect(14, mid - 1, 5, 8); }
+  if (e.kind === 'banana') { ctx.fillStyle = '#eceff1'; rr(13, mid + 1, 5, 9, 1); ctx.fill(); ctx.fillStyle = '#e53935'; circ(15.5, mid + 3, 1); ctx.fill(); }
+  if (e.kind === 'chili') { ctx.fillStyle = '#fff8e1'; ell(16, mid + 6, 6, 3); ctx.fill(); ctx.fillStyle = '#ffb300'; ell(16, mid + 5, 4.5, 1.6); ctx.fill(); }
+  if (e.kind === 'peach' && G.patrol && e.alive) txt('✨', 10, mid - 18 + Math.sin(FC * 0.2) * 2, 10, '#fff', 'center');
+  ctx.restore();
+  if (e.kind === 'lemon' && e.stolen > 0) { for (let i = 0; i < Math.min(5, e.stolen); i++) drawGrape(cx - 8 + (i % 3) * 8, e.y - 10 - Math.floor(i / 3) * 8 + Math.sin(FC * 0.2 + i) * 1.5); txt(`偷了 ${e.stolen}`, cx, e.y - 30, 10, '#fff', 'center', { stroke: '#e65100', sw: 3 }); }
+  if (e.alive) txt(`${O.name}・${O.title}`, cx, by + 12, 9, '#fff', 'center', { stroke: '#3e2723', sw: 3, weight: 'normal' });
+  if (e.dizzy > 0) txt('💫', cx, e.y - 8, 12, '#000', 'center');
+  if (e.say && !(G.meet && G.meet.e === e)) drawBubble(cx, e.y - (e.kind === 'lemon' && e.stolen ? 40 : 6), e.say.text, 13);
+  ctx.globalAlpha = 1;
+}
+function drawMeet() {
+  const m = G.meet; if (!m) return;
+  const cx = P.x + P.w / 2, cy = P.y + P.h / 2 - 8, r = 46 + Math.sin(FC * 0.1) * 2;
+  ctx.fillStyle = 'rgba(255,255,255,.18)'; circ(cx, cy, r); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.fillStyle = '#fafafa'; rr(cx - 36, cy - r - 46, 72, 40, 4); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1.5; ctx.stroke();
+  txt('Q3 對齊會議', cx, cy - r - 32, 9, '#37474f', 'center'); txt('v' + (12 + Math.floor(m.t / 60)) + '（最終版）', cx, cy - r - 18, 8, '#90a4ae', 'center', { weight: 'normal' });
+  txt('🗓️ 會議中', cx, cy - r + 6, 12, '#fff', 'center', { stroke: '#3e2723', sw: 3 });
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; rr(cx - 50, cy + r + 4, 100, 10, 5); ctx.fill(); ctx.fillStyle = '#69f0ae'; rr(cx - 50, cy + r + 4, 100 * Math.min(1, m.n / m.need), 10, 5); ctx.fill();
+  txt(isTouch ? '連點「跳」逃出會議！' : '連打 空白鍵 逃出會議！', cx, cy + r + 30, 12, '#fff59d', 'center', { stroke: '#3e2723', sw: 3 });
+  if (m.line) txt('🥥「' + m.line + '」', cx, cy - r - 58, 11, '#fff', 'center', { stroke: '#3e2723', sw: 3 });
+}
+
 // ---------- 每日關卡流程 ----------
 function startDaily(n) {
   if (!dayOpen(n)) return;
@@ -7760,16 +8015,17 @@ function drawDayClear() {
 }
 function drawCardsPage() {
   const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#263238'); g.addColorStop(1, '#101820'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  txt(`📇 名片冊　${META.cards.length} / ${CARDS.length}`, W / 2, 42, 26, '#fff', 'center');
+  txt(`📇 名片冊　${META.cards.length} / ${CARDS.length}`, W / 2, 38, 24, '#fff', 'center');
+  const cols = 6, cw = 152, ch = 80, gx = 4, x0 = (W - cols * cw - (cols - 1) * gx) / 2;
   CARDS.forEach((c, i) => {
-    const col = i % 5, row = Math.floor(i / 5), x = 12 + col * 188, y = 62 + row * 106, got = META.cards.includes(c[0]);
-    ctx.fillStyle = got ? '#fffdf6' : 'rgba(255,255,255,.08)'; rr(x, y, 180, 98, 8); ctx.fill();
-    if (got) { ctx.fillStyle = '#8e44c4'; ctx.fillRect(x, y + 8, 5, 82); }
-    if (got && c[0] === 'mengpo' && mpImgReady()) { ctx.save(); circ(x + 30, y + 50, 24); ctx.clip(); ctx.drawImage(MP_IMG, 265, 170, 230, 230, x + 6, y + 26, 48, 48); ctx.restore(); ctx.strokeStyle = '#ffca28'; ctx.lineWidth = 2; circ(x + 30, y + 50, 24); ctx.stroke(); }
-    else txt(got ? c[1] : '❔', x + 30, y + 58, 30, '#000', 'center');
-    txtFit(got ? c[2] : '？？？', x + 56, y + 26, 118, 15, got ? '#2b1d3a' : 'rgba(255,255,255,.5)');
-    txtFit(got ? '職稱：' + c[3] : '還沒交換過名片', x + 56, y + 46, 118, 12, got ? '#6d4c41' : 'rgba(255,255,255,.35)', 'left', { weight: 'normal' });
-    if (got) { txtFit('專長：' + c[4], x + 56, y + 64, 118, 12, '#6d4c41', 'left', { weight: 'normal' }); txtFit(c[5], x + 56, y + 84, 118, 12, '#8e44c4'); }
+    const col = i % cols, row = Math.floor(i / cols), x = x0 + col * (cw + gx), y = 54 + row * 86, got = META.cards.includes(c[0]);
+    ctx.fillStyle = got ? '#fffdf6' : 'rgba(255,255,255,.08)'; rr(x, y, cw, ch, 8); ctx.fill();
+    if (got) { ctx.fillStyle = '#8e44c4'; ctx.fillRect(x, y + 8, 4, ch - 16); }
+    if (got && c[0] === 'mengpo' && mpImgReady()) { ctx.save(); circ(x + 24, y + 40, 18); ctx.clip(); ctx.drawImage(MP_IMG, 265, 170, 230, 230, x + 6, y + 22, 36, 36); ctx.restore(); ctx.strokeStyle = '#ffca28'; ctx.lineWidth = 2; circ(x + 24, y + 40, 18); ctx.stroke(); }
+    else txt(got ? c[1] : '❔', x + 24, y + 48, 24, '#000', 'center');
+    txtFit(got ? c[2] : '？？？', x + 46, y + 20, cw - 52, 13, got ? '#2b1d3a' : 'rgba(255,255,255,.5)');
+    txtFit(got ? c[3] : '還沒交換過名片', x + 46, y + 37, cw - 52, 10, got ? '#6d4c41' : 'rgba(255,255,255,.35)', 'left', { weight: 'normal' });
+    if (got) { txtFit('專長：' + c[4], x + 46, y + 53, cw - 52, 10, '#6d4c41', 'left', { weight: 'normal' }); txtFit(c[5], x + 8, y + 72, cw - 14, 10, '#8e44c4'); }
   });
   drawBtn(W / 2 - 80, H - 46, 160, 36, '◀ 回標題', goTitle, '#455a64');
 }
