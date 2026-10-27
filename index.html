@@ -305,7 +305,7 @@ setInterval(bgmTick, 50);
 // ---------- 高爾夫：柔和的 Bossa Nova（電鋼琴＋和弦墊＋沙鈴＋木魚＋鳥叫） ----------
 const SOFT_GAIN = 0.3;                                          // 整體音量：跟其他歌差不多、偏小聲
 function softNote(f, d, type, v, t, o = {}) {                   // 慢起音＋低通濾波：聲音比較圓、比較暖
-  if (!AC || muted) return; v *= SOFT_GAIN * (softNote.mul || 1);
+  if (!AC || muted || !AC.createBiquadFilter) return; v *= SOFT_GAIN * (softNote.mul || 1);
   const osc = AC.createOscillator(), g = AC.createGain(), lp = AC.createBiquadFilter();
   osc.type = type; osc.frequency.setValueAtTime(f, t);
   if (o.vib) { const l = AC.createOscillator(), lg = AC.createGain(); l.frequency.value = 5; lg.gain.value = f * 0.004; l.connect(lg); lg.connect(osc.frequency); l.start(t + 0.12); l.stop(t + d + 0.3); }
@@ -316,7 +316,7 @@ function softNote(f, d, type, v, t, o = {}) {                   // 慢起音＋�
   osc.connect(lp); lp.connect(g); g.connect(master); osc.start(t); osc.stop(t + d + r + 0.1);
 }
 function softHit(t, kind) {                                       // 沙鈴、木魚、軟軟的大鼓
-  if (!AC || muted) return;
+  if (!AC || muted || !AC.createBiquadFilter) return;
   if (kind === 'kick') { softNote(62, 0.18, 'sine', 0.13, t, { att: 0.004, sus: 0.2, rel: 0.1, cut: 400 }); return; }
   if (kind === 'wood') { softNote(1180, 0.05, 'triangle', 0.035, t, { att: 0.002, sus: 0.1, rel: 0.03, cut: 3000 }); softNote(780, 0.06, 'sine', 0.03, t, { att: 0.002, sus: 0.1, rel: 0.04, cut: 2000 }); return; }
   if (!softHit.buf || softHit.ac !== AC) {                        // 沙鈴：事先做好一小段（已經包好音量包絡）
@@ -369,7 +369,7 @@ function dayMusic(n, D) {                                         // 每日關�
   return st;
 }
 function softDrum(t, kind, v = 1) {
-  if (!AC || muted) return;
+  if (!AC || muted || !AC.createBiquadFilter) return;
   if (kind === 'k') { softNote(60, 0.2, 'sine', 0.42 * v, t, { att: 0.003, sus: 0.15, rel: 0.12, cut: 500 }); return; }
   if (kind === 'r') { softHit(t, 'wood'); return; }
   if (!softDrum.buf || softDrum.ac !== AC) { const n = Math.floor(AC.sampleRate * 0.18), bf = AC.createBuffer(1, n, AC.sampleRate), d = bf.getChannelData(0); let lp = 0;
@@ -391,7 +391,11 @@ function styledStep0(s, st, i, t) {                               // 一拍：�
   if (D.h && D.h.includes(k)) softDrum(tt, 'h', (D.hv || 1) * (k % 2 ? 0.8 : 1.2));
   return step;
 }
-function songStyle(name) { return (typeof LV !== 'undefined' && LV && LV.music && name === LV.song) ? LV.music : (SONG_STYLE[name] || null); }
+function songStyle(name) {
+  let st = (typeof LV !== 'undefined' && LV && LV.music && name === LV.song) ? LV.music : (SONG_STYLE[name] || null);
+  if (st && G.friday && typeof LV !== 'undefined' && LV && name === LV.song) st = Object.assign({}, st, { tempo: (st.tempo || 1) * 1.2, drum: 'bossa', lead: st.lead === 'synth' || st.lead === 'brass' ? 'ep' : st.lead, dark: false });   // 週五下午：慵懶版
+  return st;
+}
 function birdTweet(t) {                                           // 遠方的小鳥
   if (!AC || muted) return; const b = 2600 + Math.random() * 900, n = 2 + Math.floor(Math.random() * 3);
   for (let i = 0; i < n; i++) { const tt = t + i * 0.11; const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(b, tt); o.frequency.exponentialRampToValueAtTime(b * 1.35, tt + 0.05); o.frequency.exponentialRampToValueAtTime(b * 0.95, tt + 0.08);
@@ -405,12 +409,15 @@ SONGS.golf = { step: 0.2, soft: true, swing: 0.16,
         81,0,0,79,77,0,76,0, 76,0,0,0,72,0,76,79, 81,0,79,0,77,0,74,0, 74,0,0,77,0,0,0,0,
         76,0,74,0,72,0,70,0, 69,0,72,0,76,0,0,0, 74,0,0,72,70,0,69,0, 67,0,0,0,0,0,0,0], bass: [0] };
 SONGS.golfRain = Object.assign({}, SONGS.golf, { step: 0.24, rain: true });
+SONGS.lift = { step: 0.22, soft: true, swing: 0.14, muzak: true,          // 電梯音樂（Bossa Nova 罐頭版）
+  mel: [72,0,0,74,76,0,79,0, 77,0,76,0,74,0,0,0, 74,0,0,76,77,0,81,0, 79,0,77,0,76,0,0,0,
+        76,0,0,77,79,0,84,0, 82,0,81,0,79,0,77,0, 76,0,74,0,72,0,74,0, 72,0,0,0,0,0,0,0], bass: [0] };
 function golfMusicStep(s, i, t) {                                  // 一拍：旋律、和弦、貝斯、打擊
   const bar = Math.floor(i / 8) % 8, k = i % 8, [root, ch] = GOLF_CH[bar], st = s.step;
   const sw = i % 2 ? st * s.swing : 0, tt = t + sw;
   const m = s.mel[i % s.mel.length];
   if (m) { const len = (() => { let n = 1; while (n < 4 && !s.mel[(i + n) % s.mel.length]) n++; return n; })() * st;
-    softNote(mtof(m), len * 0.9, 'triangle', s.rain ? 0.05 : 0.06, tt, { att: 0.015, sus: 0.45, rel: 0.4, cut: s.rain ? 1400 : 2200, vib: len > st * 2 });
+    softNote(mtof(m), len * 0.9, s.muzak ? 'sine' : 'triangle', s.rain ? 0.05 : 0.06, tt, { att: 0.015, sus: 0.45, rel: 0.4, cut: s.rain || s.muzak ? 1400 : 2200, vib: len > st * 2 || s.muzak });
     softNote(mtof(m + 12), len * 0.5, 'sine', 0.012, tt, { att: 0.01, sus: 0.2, rel: 0.2, cut: 3000 }); }   // 電鋼琴的泛音
   if (k === 0) ch.forEach((n, j) => softNote(mtof(n), st * 7.6, 'sine', 0.018, tt + j * 0.012, { att: 0.25, sus: 0.8, rel: 0.6, cut: 1200 }));   // 和弦墊
   if ([2, 5].includes(k)) ch.slice(1).forEach(n => softNote(mtof(n), st * 0.9, 'triangle', 0.012, tt, { att: 0.006, sus: 0.3, rel: 0.15, cut: 1600 }));   // 吉他刷弦（輕輕的）
@@ -419,7 +426,7 @@ function golfMusicStep(s, i, t) {                                  // 一拍：�
   if (!s.rain || k % 2 === 0) softHit(tt, k % 2 ? 'shk' : 'shk2');
   if (k === 0 || k === 4) softHit(t, 'kick');
   if ([0, 3, 6].includes(i % 16) || [10, 12].includes(i % 16)) softHit(tt, 'wood');
-  if (k === 0 && Math.random() < 0.18 && !s.rain) birdTweet(t + st * (2 + Math.random() * 4));
+  if (k === 0 && Math.random() < 0.18 && !s.rain && !s.muzak) birdTweet(t + st * (2 + Math.random() * 4));
 }
 
 // ---------- 輸入：鍵盤 + 觸控 ----------
@@ -435,6 +442,8 @@ window.addEventListener('keydown', e => {
   if (G.state === 'shop') { shopKey(e); return; }
   if (G.state === 'calendar') { calKey(e); return; }
   if (G.state === 'mengpo') { mengpoKey(e); return; }
+  if (G.state === 'hub') { if (!e.repeat) hubKey(e); if (e.code === 'KeyM') toggleMute(); return; }
+  if (G.state === 'elevator') { if (['Space', 'Enter'].includes(e.code) || /^Digit/.test(e.code)) e.preventDefault(); if (!e.repeat) elevatorKey(e); if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'golf') { if (e.code === 'Escape') golfExit(); else if (G.golf && G.golf.td && ['ArrowLeft', 'KeyA', 'KeyQ', 'ArrowRight', 'KeyD', 'KeyE'].includes(e.code)) { e.preventDefault(); golfTdTurn(['ArrowLeft', 'KeyA', 'KeyQ'].includes(e.code) ? (e.shiftKey ? -2 : -0.5) : (e.shiftKey ? 2 : 0.5)); } else if (/^Digit[1-6]$/.test(e.code)) golfSpinSel(+e.code.slice(5) - 1); else if (['KeyQ', 'ArrowLeft'].includes(e.code)) { e.preventDefault(); golfSpinCycle(-1); } else if (['KeyE', 'ArrowRight'].includes(e.code)) { e.preventDefault(); golfSpinCycle(1); } else if (['Space', 'Enter', 'ArrowUp', 'KeyZ', 'KeyK', 'KeyW'].includes(e.code)) { e.preventDefault(); if (!e.repeat) golfPress(); } else if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'skins') { skinKey(e); return; }
   if (G.state === 'cards') { if (['Escape', 'Enter', 'Space'].includes(e.code)) { e.preventDefault(); goTitle(); } return; }
@@ -453,6 +462,7 @@ window.addEventListener('keydown', e => {
   if (G.state === 'title' && /^Digit[1-9]$/.test(e.code)) { const s = readSave(), i = +e.code.slice(5) - 1; if (s && s.slots[i]) { initAudio(); loadRun(i); } return; }
   if (G.state === 'title' && e.code === 'KeyB') { openBubble('title'); return; }
   if (G.state === 'title' && e.code === 'KeyG') { openGolf(); return; }
+  if (G.state === 'title' && e.code === 'KeyE') { openElevator(); return; }
   if (G.state === 'review' && e.code === 'KeyS') { saveShot(); return; }
   if (G.state === 'ach' && e.code === 'Escape') { closeAch(); return; }
   const k = KEYMAP[e.code];
@@ -502,7 +512,7 @@ cvs.addEventListener('pointerdown', e => {
   if ((G.bro || G.cine) && G.state === 'play' && !G.paused) { G.mash = true; return; }
   if (G.state === 'bubble') { ptrDown = true; popAt(p.x, p.y); try { cvs.setPointerCapture(e.pointerId); } catch (_) {} return; }
   if (G.state === 'golf') { golfPress(); return; }
-  if (G.state === 'shop' || G.state === 'calendar' || G.state === 'cards' || G.state === 'skins' || G.state === 'mengpo') return;
+  if (G.state === 'shop' || G.state === 'calendar' || G.state === 'cards' || G.state === 'skins' || G.state === 'mengpo' || G.state === 'elevator' || G.state === 'hub') return;
   if (G.state === 'play' && G.bsod && !G.paused) { bsodPress(); return; }
   if (G.state !== 'play') confirmAct(); else if (G.paused) togglePause();
 });
@@ -1079,7 +1089,8 @@ function burst(x, y, color, n = 8, spd = 3, kind) {
     parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1.5, g: 0.2, life: rand(25, 45), max: 45, color, size: rand(3, 5), kind });
   }
 }
-function toast(text, t = 230) { G.toast = { text, t, max: t }; SFX.event(); }
+const STORY_MIN = 300;                                           // 劇情文字至少停留 5 秒（60 格＝1 秒）
+function toast(text, t = 230) { t = Math.max(t, STORY_MIN); G.toast = { text, t, max: t }; SFX.event(); }
 
 // ---------- 生成 ----------
 function place(e, d, float) {
@@ -1131,7 +1142,7 @@ function newPlayer(tx) {
 }
 
 function loadLevel(idx, useCP) {
-  G.levelIdx = idx; LV = build(LEVELS[idx]); G.mercT = 0;
+  G.levelIdx = idx; LV = build(LEVELS[idx]); G.mercT = 0; G.friday = fridayMode();
   if (fortune() === 'slowclock') LV.tick *= 1.25;
   if (LV.secret) LV.sub = LV.mission = fridayLine();
   enemies = []; items = []; props = []; projs = []; parts = []; pops = []; bumps = []; objs = []; boss = null;
@@ -1371,6 +1382,7 @@ function step() {
     case 'parade': updateFx(); if (G.stateT % 8 === 0) SFX.pop(); break;
     case 'mengpo': updateMengpo(); break;
     case 'golf': updateGolf(); break;
+    case 'elevator': updateElevator(); break;
   }
   if (G.bro || G.cine || G.state === 'mengpo' || (G.state === 'golf' && G.golf && ['holed', 'done'].includes(G.golf.phase))) {}
   else if (G.achShow) { if (--G.achShow.t <= 0) G.achShow = null; }
@@ -1789,6 +1801,7 @@ function updateEnemies() {
       continue;
     }
     if (!e.active) { if (e.x < cam.x + W + 48 && e.x + e.w > cam.x - 48) e.active = true; else continue; }
+    if (G.friday && Math.floor(e.t) % 3 === 0) continue;                    // 週五下午：怪物懶洋洋（慢 1/3）
     if (e.x < cam.x - 700) { e.alive = false; e.dieT = 999; continue; }
     if (e.spawnT > 0) e.spawnT--;
     if (e.type === 'cowork') { updateCoworker(e, asleep); continue; }
@@ -4652,6 +4665,10 @@ function drawEnding() {
   if (t > 120 && FC % 70 < 50) txt(isTouch ? '點一下畫面：查看離職考核' : '按 Enter：查看離職考核', W / 2, 318, 16, '#6d4c41', 'center');
 }
 function drawTitle() {
+  drawTitleBG();
+  drawTitleMenu();
+}
+function drawTitleBG() {
   cam.x = FC * 1.2; drawBG(); cam.x = 0; drawHoliday(true);
   const off = (FC * 1.2) % T;
   for (let x = -T; x < W + T; x += T) { drawFloor(x - off, H - 64, true, 0); drawFloor(x - off, H - 32, false, 0); }
@@ -4665,6 +4682,8 @@ function drawTitle() {
   drawCoworker({ x: W / 2 + 70, y: H - 64 - 34, w: 24, h: 34, t: FC, alive: true, face: -1, vx: 0, throwT: FC % 120 < 20 ? 1 : 0 });
   drawParrot({ kind: 'parrot', x: 60, y: 300 + Math.sin(FC * 0.05) * 12, w: 56, h: 56, face: 1, state: 'fly', inv: 0, ver: 2 + Math.floor(FC / 90) % 98, spikes: [] });
 
+}
+function drawTitleMenu() {
   ctx.fillStyle = 'rgba(21,13,38,.8)'; rr(W / 2 - 330, 40, 660, 250, 22); ctx.fill();
   ctx.strokeStyle = '#8e44c4'; ctx.lineWidth = 4; ctx.stroke();
   const wob = Math.sin(FC * 0.05) * 2;
@@ -4676,34 +4695,21 @@ function drawTitle() {
   txt(isTouch ? '◀ ▶ 移動　跳　↓ 互動　怒氣滿了按「翻桌」' : '← → 移動　↑ / 空白鍵 跳　↓ 互動　X 翻桌　P 員工手冊', W / 2, 196, 15, '#fff', 'center', { weight: 'normal' });
   txt('⏰ 每天 18:00 前走到出口＝準時下班。踩頭、翻桌、別被老闆抓到摸魚', W / 2, 222, 15, '#fff', 'center', { weight: 'normal' });
   const sv = readSave(), cont = sv && sv.last != null && sv.slots[sv.last];
-  const nd = nextDay(), dayLbl = stampCount() >= 30 ? '📅 每日打卡（全勤！）' : `📅 每日打卡：Day ${nd}`;
-  const openCards = () => { G.state = 'cards'; G.stateT = 0; }, openSkins = () => { G.state = 'skins'; G.stateT = 0; G.skinSel = 0; G.skinMsg = ''; };
-  const row = (y, h, list) => { const bw = list.length > 6 ? 124 : list.length > 4 ? 142 : 168, gap = 8, x0 = W / 2 - (list.length * bw + (list.length - 1) * gap) / 2;
-    list.forEach(([l, fn, c], i) => drawBtn(x0 + i * (bw + gap), y, bw, h, l, fn, c)); };
-  const extras = [[`🏅 成就 ${achGot.size}`, () => openAch('title')], [`📇 名片 ${META.cards.length}`, openCards, '#455a64'], ['👕 造型', openSkins, '#6a1b9a'], ['🫧 泡泡紙', () => openBubble('title'), '#0277bd'], ['⛳ 高爾夫', openGolf, '#2e7d32']];
-  if (!cont) {
-    if (FC % 70 < 50) txt(isTouch ? '▶ 點一下畫面開始故事模式' : '▶ 按 Enter 開始故事模式', W / 2, 266, 20, '#b9f6ca', 'center');
-    drawBtn(W / 2 - 310, 294, 300, 44, '▶ 故事模式（4 天）', () => startGame(), '#2e7d32');
-    drawBtn(W / 2 + 10, 294, 300, 44, dayLbl, openCalendar, '#e65100');
-    row(346, 38, extras);
-  } else {
-    const dn = i => LEVELS[i].name.split('｜')[1] || LEVELS[i].name;
-    if (FC % 70 < 50) txt((isTouch ? '▶ 點畫面' : '▶ Enter') + `：故事模式從第 ${sv.last + 1} 天（${dn(sv.last)}）繼續`, W / 2, 266, 19, '#b9f6ca', 'center');
-    const n = MAIN_LAST + 1, bw = 142, gap = 10, x0 = W / 2 - (n * bw + (n - 1) * gap) / 2;
-    for (let i = 0; i < n; i++) {
-      const ok = !!sv.slots[i], x = x0 + i * (bw + gap);
-      if (ok) drawBtn(x, 294, bw, 40, `${i === sv.last ? '▶ ' : ''}${dn(i)}`, () => loadRun(i), i === sv.last ? '#2e7d32' : '#5e35b1');
-      else { ctx.fillStyle = 'rgba(40,30,60,.75)'; rr(x, 294, bw, 40, 10); ctx.fill(); txt('🔒 第 ' + (i + 1) + ' 天', x + bw / 2, 320, 15, 'rgba(255,255,255,.45)', 'center'); }
-    }
-    row(342, 38, [['🆕 從週一重來', () => startGame(), '#6d4c41'], ['📅 每日打卡', openCalendar, '#e65100'], ...extras]);
-  }
-  if (!isTouch) txt('鍵盤：D 每日打卡｜N 重來｜C 成就｜K 名片冊｜H 造型｜B 泡泡紙｜G 高爾夫', W / 2, 402, 13, 'rgba(255,255,255,.85)', 'center', { weight: 'normal', stroke: '#2b1d3a', sw: 3 });
+  const nd = nextDay(), dayLbl = stampCount() >= 30 ? '📅 每日打卡（全勤！）' : `📅 每日打卡：Day ${Math.min(nd, 30)}`;
+  const dn = i => LEVELS[i].name.split('｜')[1] || LEVELS[i].name;
+  if (FC % 70 < 50) txt(cont ? (isTouch ? '▶ 點畫面' : '▶ Enter') + `：從第 ${sv.last + 1} 天（${dn(sv.last)}）繼續` : (isTouch ? '▶ 點一下畫面開始' : '▶ 按 Enter 開始'), W / 2, 262, 18, '#b9f6ca', 'center');
+  drawBtn(W / 2 - 310, 304, 300, 52, cont ? `▶ 繼續：${dn(sv.last)}` : '▶ 故事模式（4 天）', () => cont ? loadRun(sv.last) : startGame(), '#2e7d32');
+  drawBtn(W / 2 + 10, 304, 300, 52, dayLbl, openCalendar, '#e65100');
+  const sec = [['🎮 小遊戲', () => openHub('games'), '#0277bd'], ['🎒 收藏冊', () => openHub('collect'), '#6a1b9a']];
+  if (cont) sec.push(['📖 選關／重來', () => openHub('story'), '#5e35b1']);
+  const bw = 196, gap = 12, x0 = W / 2 - (sec.length * bw + (sec.length - 1) * gap) / 2;
+  sec.forEach(([l, fn, c], i) => drawBtn(x0 + i * (bw + gap), 368, bw, 42, l, fn, c));
   txt('本遊戲純屬虛構。如有雷同，建議你考慮換工作。', W / 2, H - 14, 12, 'rgba(255,255,255,.75)', 'center', { weight: 'normal' });
 }
 
 function render() {
   if (isTouch && btnFlip) btnFlip.classList.toggle('ready', G.state === 'play' && G.rage >= 100);
-  if (isTouch && G.menuCls !== G.state) { G.menuCls = G.state; document.body.classList.toggle('menu', ['title', 'calendar', 'cards', 'skins', 'ach', 'shop', 'dayclear', 'review', 'credits', 'bubble', 'mengpo', 'parade', 'golf'].includes(G.state)); }
+  if (isTouch && G.menuCls !== G.state) { G.menuCls = G.state; document.body.classList.toggle('menu', ['title', 'calendar', 'cards', 'skins', 'ach', 'shop', 'dayclear', 'review', 'credits', 'bubble', 'mengpo', 'parade', 'golf', 'elevator', 'hub'].includes(G.state)); }
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, W, H);
   G.ui = [];
@@ -4717,6 +4723,8 @@ function render() {
   if (G.state === 'parade') { drawParade(); return; }
   if (G.state === 'mengpo') { drawMengpo(); drawAchBanner(); return; }
   if (G.state === 'golf') { drawGolf(); drawAchBanner(); return; }
+  if (G.state === 'hub') { drawHub(); drawAchBanner(); return; }
+  if (G.state === 'elevator') { drawElevator(); drawAchBanner(); return; }
   if (G.state === 'credits') { drawCredits(); drawAchBanner(); return; }
   if (G.state === 'ach') { drawAchPage(); drawAchBanner(); return; }
   if (G.state === 'ending') { drawEnding(); drawAchBanner(); return; }
@@ -4730,7 +4738,7 @@ function render() {
   if (G.fx && G.fx.drunk > 0 && G.state === 'play') { ctx.translate(W / 2, H / 2); ctx.rotate(Math.sin(FC * 0.035) * 0.03 * Math.min(1, G.fx.drunk / 60)); ctx.translate(-W / 2, -H / 2); }
   ctx.translate(-Math.round(cam.x) + sx, sy);
   drawTiles(); drawLvSpikes(); drawObjs(); drawProps(); drawItems();
-  for (const e of enemies) if (e.x > cam.x - 80 && e.x < cam.x + W + 80) drawEnemy(e);
+  for (const e of enemies) if (e.x > cam.x - 80 && e.x < cam.x + W + 80) { drawEnemy(e); if (G.friday && e.alive && e.type !== 'cowork') { const ic = ['💤', '🍹', '🏖️'][Math.floor(e.x / 97) % 3]; ctx.globalAlpha = 0.85; txt(ic, e.x + e.w / 2 + Math.sin(FC * 0.05 + e.x) * 4, e.y - 10 - (FC * 0.3 + e.x) % 14, 14, '#000', 'center'); ctx.globalAlpha = 1; } }
   if (boss) { drawBoss(boss); if (boss.broStunT > 0 && boss.state !== 'dead') for (let i = 0; i < 4; i++) { const a = FC * 0.1 + i * 1.57; txt('★', boss.x + boss.w / 2 + Math.cos(a) * 30, boss.y - 6 + Math.sin(a) * 7, 16, '#ffd54f', 'center', { stroke: '#5d4037', sw: 3 }); } }
   drawPlayer(); drawProjs(); drawParts();
   ctx.restore();
@@ -5735,6 +5743,7 @@ const HOLI = {
   halloween: ['🎃 萬聖節快樂！今天辦公室的怪物特別多（平常也很多）', '🎃 萬聖節特別版'],
 };
 const RT_SEEN = {};
+function fridayMode() { const d = realNow(); return d.getDay() === 5 && d.getHours() >= 12; }   // 週五下午
 function realtimeMsg() {                                   // 進關卡時挑一則還沒說過的
   const d = realNow(), h = d.getHours(), wd = d.getDay(), hol = holiday();
   const list = [];
@@ -5742,6 +5751,7 @@ function realtimeMsg() {                                   // 進關卡時挑一
   if (h >= 1 && h < 5) list.push(['night', `🥣 孟婆傳來訊息：「現實中都凌晨 ${h} 點了，你也該睡了，不然會來我這裡」`]);
   if (h === 18) list.push(['six', '🕕 現實中也 18:00 了，你真的該下班了吧？']);
   if (wd === 0 || wd === 6) list.push(['wknd', '📅 今天是週末，你還在玩上班遊戲？']);
+  if (G.friday) list.push(['fri', '🍹 現實中是週五下午！怪物們都在想週末，動作變慢、音樂也變慵懶了']);
   for (const [k, t] of list) if (!RT_SEEN[k]) { RT_SEEN[k] = true; return t; }
   return null;
 }
@@ -5800,6 +5810,10 @@ const GOLF_HOLES = [
   { name: '第三洞：老闆的私人果嶺', par: 4, tee: 150, hole: 760, pts: [[0, 432], [240, 432], [370, 336], [470, 336], [560, 420], [960, 420]], tree: [310, 330, 46], green: [680, 850], gc: [[700, 6, 40]], stimp: 'fast', gl: { t: 0.02, b: [[740, 30, 2, 35]] } },
   { name: '第四洞：KPI 一路往上', par: 4, len: 2560, tee: 150, hole: 2300, pts: [[0, 440], [350, 440], [600, 425], [900, 410], [1100, 404], [1300, 404], [1400, 396], [1550, 384], [1620, 376], [1700, 352], [1820, 350], [1900, 362], [2000, 370], [2560, 370]], sand: [1150, 1270], tree: [1560, 334, 40], green: [2200, 2400], gc: [[2300, 5, 45]], stimp: 'slow', gl: { t: -0.01, b: [[2280, -20, 1.5, 35]] } },
   { name: '第五洞：年終獎金那麼遠', par: 5, len: 3700, tee: 150, hole: 3400, pts: [[0, 430], [400, 430], [700, 412], [1000, 420], [1300, 428], [1690, 428], [1720, 476], [1900, 476], [1925, 424], [2200, 418], [2500, 404], [2800, 392], [3100, 388], [3200, 380], [3700, 380]], water: [1720, 1900, 452], sand: [2950, 3080], green: [3290, 3500], gc: [[3350, -4, 35], [3455, 4, 35]], stimp: 'mid', gl: { t: 0.015, b: [[3420, 25, -1.5, 30]] } },
+  { name: '第六洞：老闆的人工湖', par: 4, len: 2050, tee: 150, hole: 1720, look: 4, waterName: '老闆的人工湖（請勿餵魚，魚會吃球）',
+    pts: [[0, 430], [262, 430], [292, 474], [770, 474], [792, 442], [930, 442], [952, 474], [1520, 474], [1550, 420], [2050, 420]],
+    water: [292, 1520, 452], islands: [[792, 930]], green: [1600, 1830], gc: [[1680, 3, 40]], gl: { t: 0.01, b: [] }, stimp: 'mid',
+    tip: ['🏞️ 湖太大了，一般球飛不過去！', '選 💧 水漂、角度壓低，一桿彈過湖；或先打上中間的小島再過去'] },
 ];
 const GOLF_BOSS_TALK = ['慢慢打～我們等你', '年輕人力氣大喔', '這洞很難，你不用太勉強', '你知道我上次打幾桿嗎？', '（老闆偷偷把球踢回球道）', '風很大喔，打不好很正常'];
 const GOLF_CADDIE = ['老闆好球！！', '好球！！（球在哪？）', '老闆今天手感很好！', '這是戰術性下水！'];
@@ -5826,6 +5840,7 @@ function golfStartHole() {
   g.wx = (g.wxs && g.wxs[g.hole]) || null; if (G.state === 'golf') queueSong(golfWet(g) ? 'golfRain' : 'golf');   // 下雨換慢一點、悶一點的版本 g.bald = false; g.wig = null; g.wigDone = false; g.wigOnCaddie = false; g.td = null; g.pv = 0; g.adv = null; g.shots = []; g.rpDone = false; g.rp = null; g.stormHit = false; g.st = null;
   if (g.wx === 'wind') g.wind = Math.round((Math.random() < 0.5 ? -1 : 1) * (1.4 + Math.random() * 0.5) * 10) / 10;
   if (g.wx && !(g.stormed && g.wx === 'rain')) { getCard('weather'); golfPop(g, GOLF_WX[g.wx].intro, W / 2, 196, { size: 24, screen: true, life: 170 }); golfPop(g, GOLF_WX[g.wx].sub, W / 2, 232, { size: 15, screen: true, life: 170 }); }
+  if (H0.tip && !g.stormed) H0.tip.forEach((s, i) => golfPop(g, s, W / 2, 150 + i * 30, { size: i ? 15 : 20, col: i ? '#fff' : '#b3e5fc', screen: true, life: 200 }));
   if (H0.desc && !g.stormed) golfPop(g, '📅 ' + H0.desc, W / 2, 160, { size: 16, screen: true, life: 200 });
 }
 // ---------- 球的物理（玩家、老闆共用） ----------
@@ -5834,8 +5849,23 @@ function golfVel(angle, power, putt, dir, spin) { const a = (putt ? 0 : angle) *
 function golfOnGreen(H0, x) { return x > H0.green[0] && x < H0.green[1]; }
 function golfPhys(b, H0, wind) {                            // 走一個子步，回傳事件
   const sp = b.spin, air = !b.land;                          // 特殊球路：飛行中
-  b.vy += 0.125 + (air ? (sp === 'top' ? 0.025 : sp === 'back' ? -0.012 : 0) : 0); b.vx += wind * 0.004 * (sp === 'stinger' && air ? 0.3 : 1); b.x += b.vx / 2; b.y += b.vy / 2;
+  b.vy += 0.125 + (air ? (sp === 'top' ? 0.025 : sp === 'back' ? -0.012 : 0) : 0); if (air) b.vx += wind * 0.004 * (sp === 'stinger' ? 0.3 : 1);   // 風只吹空中的球（地上滾的不會被吹走）
   let ev = null;
+  if (air && Math.abs(wind) >= 1.2 && b.vy > -6) {                // 颱風逆風：高球會被吹回來（穿林球不太受影響）
+    const ht = golfGround(H0, b.x) - b.y, k = clamp((ht - 40) / 120, 0, 1) * (sp === 'stinger' ? 0 : 1);
+    const before = Math.sign(b.vx); if (before && before !== Math.sign(wind) || b.boom) { b.vx += wind * 0.03 * k; if (b.boom || Math.sign(b.vx) !== before) b.vx = clamp(b.vx, -2.6, 2.6); }   // 吹回來，但不會飛太遠
+    if (!b.boom && before && Math.sign(b.vx) !== before && Math.sign(wind) !== before) { b.boom = true; ev = 'boomerang'; }
+  }
+  b.x += b.vx / 2; b.y += b.vy / 2;
+  if (air && !b.pinHit && b.vy > 0 && Math.abs(b.x - H0.hole) < 2.6) {          // 打到旗桿：叮！有機率直接掉進洞
+    const hy = golfGround(H0, H0.hole);
+    if (b.y > hy - 82 && b.y < hy - 6) {
+      b.pinHit = true; const r = Math.sin(b.vx * 12.9898 + b.y * 78.233) * 43758.5453, lucky = (r - Math.floor(r)) < 0.3 && Math.abs(b.vx) < 8;
+      if (lucky) { b.x = H0.hole; b.vx = 0; b.vy = Math.max(1, b.vy * 0.3); b.pinDrop = true; }
+      else { b.vx = -b.vx * 0.3; b.vy = Math.abs(b.vy) * 0.3; b.x += Math.sign(b.vx || 1) * 4; }
+      ev = 'pin';
+    }
+  }
   if (!b.noTree) { const TR = golfTrees(H0); for (let i = 0; i < TR.length; i++) { const [tx, ty, tr] = TR[i]; if (Math.hypot(b.x - tx, b.y - ty) < tr) { b.vx = -b.vx * 0.4; b.vy = Math.abs(b.vy) * 0.2; b.x += b.vx * 2; ev = 'tree'; break; } } }
   if (H0.water && b.x > H0.water[0] && b.x < H0.water[1] && b.y >= H0.water[2]) {
     if (sp === 'skim' && (b.skips || 0) < 3 && Math.abs(b.vx) > 3 && b.vy < Math.abs(b.vx) * 0.75) { b.skips = (b.skips || 0) + 1; b.y = H0.water[2] - 1; b.vy = -Math.abs(b.vy) * 0.55 - 0.6; b.vx *= 0.82; return 'skip'; }   // 打水漂
@@ -5857,13 +5887,14 @@ function golfPhys(b, H0, wind) {                            // 走一個子步�
     else { b.vy = 0; if (first && sp === 'back') { b.vx = -b.vx * 0.45; ev = 'spinback'; }
       const onG = golfOnGreen(H0, b.x);                     // 果嶺：看果嶺速度；坡度影響比較大
       b.vx *= sp === 'back' ? 0.955 : onG ? (H0._fr || golfGreenFr(H0, wet)) : (sp === 'top' || sp === 'stinger' ? (wet ? 0.92 : 0.968) : (wet ? 0.9 : 0.95)); const p0 = golfGround(H0, b.x - 2), p1 = golfGround(H0, b.x + 2); b.sl = onG ? (p1 - p0) * 0.028 : 0; b.vx += onG ? b.sl : (p1 - p0) * 0.02; }
+    if (b.pinDrop && Math.abs(b.x - H0.hole) < 7) { b.x = H0.hole; b.rest = true; return 'holed'; }   // 沿著旗桿滑進洞
     if (Math.abs(b.x - H0.hole) < 7 && Math.abs(b.vx) < (b.vy === 0 && golfOnGreen(H0, b.x) ? 1.0 : 2.6) && Math.abs(b.vy) < 2) { b.x = H0.hole; b.rest = true; return 'holed'; }   // 推桿太大力會滑過洞口
     if (Math.abs(b.vx) < 0.08 && b.vy === 0 && Math.abs(b.sl || 0) < 0.007) { b.vx = 0; b.rest = true; return 'rest'; }   // 果嶺斜坡上停不住，會往下滾
   }
   return ev;
 }
-function golfTry(b0, H0, wind, a, p, putt, dir) {
-  const b = { x: b0.x, y: b0.y, rest: false, noTree: golfNoTree(H0, b0) }; [b.vx, b.vy] = golfVel(a, p, putt, dir);
+function golfTry(b0, H0, wind, a, p, putt, dir, spin) {
+  const b = { x: b0.x, y: b0.y, rest: false, noTree: golfNoTree(H0, b0), spin: spin || null, land: false, skips: 0 }; [b.vx, b.vy] = golfVel(a, p, putt, dir, spin);
   let ev = null, n = 0; while (n++ < 4000 && !['water', 'oob', 'holed', 'rest'].includes(ev)) ev = golfPhys(b, H0, wind);
   return ev === 'holed' ? -1 : ev === 'water' || ev === 'oob' ? Math.abs(b0.x - H0.hole) + 900 : Math.abs(b.x - H0.hole);
 }
@@ -5880,27 +5911,35 @@ function golfAI(b0, H0, wind, k, first) {                   // 老闆的球技�
     if (sc < 0 && first && Math.random() > 0.03) sc = 9999;   // 一桿進洞很稀有
     if (!best || sc < best.sc) best = { a, p, putt, dir, sc };
   }
+  if (H0.water && dir > 0 && b0.x < H0.water[0]) for (let i = 0; i < k * 2; i++) {      // 湖：老闆也想打水漂
+    const a = rand(10, 24), p = rand(45, 100), sc = golfTry(b0, H0, wind, a, p, false, dir, 'skim');
+    if (sc < best.sc) best = { a, p, putt, dir, sc, spin: 'skim' };
+  }
   return best;
 }
 // ---------- 老闆打球（真的一桿一桿打，偶爾賴皮） ----------
 function golfBossStep() {
   const g = G.golf, H0 = GH()[g.hole], B = g.bp; B.t++;
+  if (B.note !== B._ln) { B._ln = B.note; B.noteAge = 0; } else B.noteAge = (B.noteAge || 0) + 1;   // 旁白顯示了多久
+  const read = g.skipping || !B.note || B.noteAge > 210;
   if (B.state === 'aim' && B.t === 1 && g.wx === 'wind' && !g.wigDone && Math.random() < 0.7) {   // 颱風：老闆的「帽子」飛走（鏡頭特寫）
-    g.wigDone = true; B.state = 'wig'; B.t = 0; B.note = '🌀 一陣狂風——'; return;
+    g.wigDone = true; B.state = 'wig'; B.t = 0; B.note = '🌀 一陣狂風——'; golfCineStart(g, 'wig', { dur: 70, slow: 2, snap: 34 }); return;
   }
-  if (B.state === 'wig') { golfWigStep(g, H0, B); return; }
+  if (B.state === 'wig') { golfWigStep(g, H0, B); if (B.t === 88 && !g.cine) golfCineStart(g, 'bald', { dur: 40, slow: 2, snap: 8 }); return; }
   if (B.state === 'aim' && B.t === 1 && !B.whiffed && Math.random() < 0.18) {      // 隨機搞笑：老闆揮空／手機響
-    B.whiffed = true; B.state = 'whiff'; B.t = 0; B.note = pick(['💨 老闆揮空了…「這是練習揮桿」', '📱 老闆的手機響了：「喂？我在打…開會。」', '😤 老闆：「誰在講話？害我分心！」（沒人講話）', '🧘 老闆在做揮桿前的冥想…（三分鐘）']); return;
+    B.whiffed = true; B.state = 'whiff'; B.t = 0; B.wk = pick(['whiff', 'whiff', 'phone', 'angry', 'zen']);
+    B.note = { whiff: '💨 老闆揮空了…「這是練習揮桿」', phone: '📱 老闆的手機響了：「喂？我在打…開會。」', angry: '😤 老闆：「誰在講話？害我分心！」（沒人講話）', zen: '🧘 老闆在做揮桿前的冥想…（三分鐘）' }[B.wk];
+    golfCineStart(g, B.wk, { dur: 66, slow: 2, snap: B.wk === 'whiff' ? 12 : 22 }); return;
   }
-  if (B.state === 'whiff') { if (B.t === 8) noise(0.3, 0.1); if (B.t > 70) { B.state = 'aim'; B.t = 2; } return; }
+  if (B.state === 'whiff') { if (B.t === 8) noise(0.3, 0.1); if (B.wk === 'whiff' && B.t === 70) golfPop(g, pick(['老闆：「……風太大。」（沒有風）', '老闆：「我只是在量距離。」', '老闆：「這球場的草有問題。」']), W / 2, 210, { size: 17, screen: true }); if (B.t > 170) { B.state = 'aim'; B.t = 2; } return; }
   if (B.state === 'aim' && B.t > 24) {
-    const far = Math.abs(B.ball.x - H0.hole) > 700, s = golfAI(B.ball, H0, g.wind, 4, B.real === 0);
+    const far = Math.abs(B.ball.x - H0.hole) > 700, s = golfAI(B.ball, H0, g.wind, H0.islands ? 12 : 4, B.real === 0);
     if (far) { s.a = clamp(s.a + rand(-6, 6), 15, 75); s.p = clamp(s.p * rand(0.86, 1.12), 5, 100); }   // 長洞：老闆的大力揮桿不太準
-    const bsp = !s.putt && far && Math.random() < 0.15 ? pick(['back', 'top', 'flop', 'stinger']) : null;   // 老闆偶爾也秀一下（通常會打歪）
+    const bsp = s.spin || (!s.putt && far && Math.random() < 0.15 ? pick(['back', 'top', 'flop', 'stinger']) : null);   // 老闆偶爾也秀一下（通常會打歪）
     B.last = { x: B.ball.x, y: B.ball.y }; B.ball.noTree = golfNoTree(H0, B.ball); [B.ball.vx, B.ball.vy] = golfVel(s.a, s.p, s.putt, s.dir, bsp); B.ball.rest = false; B.ball.spin = bsp; B.ball.land = false; B.ball.skips = 0;
-    if (bsp) B.note = `😎 老闆：「看我的${golfSpinInfo(bsp).name}球！」`;
+    if (bsp) B.note = bsp === 'skim' ? '😎 老闆：「看我的水漂！小時候在溪邊練的！」' : `😎 老闆：「看我的${golfSpinInfo(bsp).name}球！」`;
     B.real++; B.claim++; B.state = 'fly'; B.t = 0; B.label = `老闆第 ${B.real} 桿`; SFX.stomp(1); golfOnStrike(g, s.putt, s.p, true);
-    if (Math.random() < 0.5) { g.caddie = pick(GOLF_CADDIE); g.caddieT = 70; chatter('caddie', 4); }
+    if (Math.random() < 0.5) { g.caddie = pick(GOLF_CADDIE); g.caddieT = 220; chatter('caddie', 4); }
     return;
   }
   if (B.state === 'fly') {
@@ -5920,7 +5959,7 @@ function golfBossStep() {
       if (ev === 'rest') {
         if (golfOnGreen(H0, B.ball.x) && Math.abs(B.ball.x - H0.hole) < 24) { B.real++; B.claim++; B.ball.x = H0.hole; B.ball.y = golfGround(H0, H0.hole) - 5; B.note = pick(['老闆：「這球 OK 吧？」（自己說了算）', '老闆：「這種距離不用推啦」']); B.state = 'holed'; B.t = 0; SFX.ding(); return; }
         B.state = 'wait'; B.t = 0;
-        if (B.cheat === 'kick' && !B.used && B.real >= 2 && !golfOnGreen(H0, B.ball.x)) { B.used = true; B.state = 'kick'; B.kick = { x0: B.ball.x, y0: B.ball.y, x1: H0.hole + (Math.random() < 0.5 ? -1 : 1) * rand(22, 46) }; B.real += 2; B.note = '🦶（老闆用腳把球「調整」到果嶺上…「這不算一桿啦」）'; chatter('durian', 5); }
+        if (B.cheat === 'kick' && !B.used && B.real >= 2 && !golfOnGreen(H0, B.ball.x)) { B.used = true; B.state = 'kick'; golfCineStart(g, 'kick', { dur: 40, slow: 2, snap: 14 }); B.kick = { x0: B.ball.x, y0: B.ball.y, x1: H0.hole + (Math.random() < 0.5 ? -1 : 1) * rand(22, 46) }; B.real += 2; B.note = '🦶（老闆用腳把球「調整」到果嶺上…「這不算一桿啦」）'; chatter('durian', 5); }
         return;
       }
     }
@@ -5929,33 +5968,57 @@ function golfBossStep() {
   if (B.state === 'kick') {
     const f = Math.min(1, B.t / 40), k = B.kick; B.ball.x = k.x0 + (k.x1 - k.x0) * f; B.ball.y = golfGround(H0, B.ball.x) - 5 - Math.sin(f * Math.PI) * 40;
     if (B.t === 1) SFX.bump();
-    if (B.t >= 40) { B.ball.y = golfGround(H0, B.ball.x) - 5; B.state = 'wait'; B.t = 0; }
+    if (B.t === 40) B.ball.y = golfGround(H0, B.ball.x) - 5;
+    if (B.t === 60) golfPop(g, pick(['桿弟：「……我什麼都沒看到。」', '老闆：「剛剛那是風吹的。」', '阿葡：（默默記在心裡）']), W / 2, 210, { size: 17, screen: true });
+    if (B.t >= 130) { B.state = 'wait'; B.t = 0; }
     return;
   }
-  if (B.state === 'wait' && B.t > 30) {
+  if (B.state === 'wait' && B.t > 30 && ((read && golfStoryLeft(g) <= 0) || B.t > 700)) {
     if (B.real >= Math.max(8, H0.par + 4)) { B.note = '老闆：「撿起來，算我進了」'; B.state = 'holed'; B.t = 0; } else { B.state = 'aim'; B.t = 0; }
     return;
   }
-  if (B.state === 'holed' && B.t > 40) {
+  if (B.state === 'holed' && B.t > 60 && read) {
     if (B.cheat && !B.used) { B.used = true; B.cheat = 'under'; B.claim = Math.max(H0.par - 1, B.real - pick([1, 2, 3])); }   // 沒機會踢球／沒下水，就直接少報
     g.boss[g.hole] = B.real; g.claim[g.hole] = B.claim;
     (g.cheats = g.cheats || [])[g.hole] = B.claim < B.real;
     B.state = 'summary'; B.t = 0; chatter('durian', 4);
   }
 }
-function golfBossSkip() { const g = G.golf; let n = 0; while (g.bp.state !== 'summary' && g.bp.state !== 'wig' && n++ < 20000) golfBossStep(); g.parts = []; if (g.fx) Object.assign(g.fx, { txt: [], hit: 0, shake: 0, flash: 0, focus: 0, slow: 0, gag: null, stats: null }); }
+function golfBossSkip() { const g = G.golf; g.cine = null; g.skipping = true; let n = 0; while (g.bp.state !== 'summary' && g.bp.state !== 'wig' && n++ < 20000) golfBossStep(); g.skipping = false; if (g.bp.state !== 'wig') g.cine = null; g.parts = []; if (g.fx) Object.assign(g.fx, { txt: [], hit: 0, shake: 0, flash: 0, focus: 0, slow: 0, gag: null, stats: null }); }
 function golfPress() {
   const g = G.golf; if (!g) return;
   if (g.phase === 'boss' && g.bp.state === 'wig') { if (g.bp.t > 100) { g.bp.state = 'aim'; g.bp.t = 2; } return; }   // 名場面：前段不能跳過
   if (g.phase === 'boss') { if (g.bp.state !== 'summary') golfBossSkip(); else if (g.bp.t > 20) { g.phase = 'aim'; g.t = 0; } return; }
   if (g.phase === 'replay') { golfReplayEnd(g); return; }
-  if (g.phase === 'storm') return;
+  if (g.phase === 'storm') { if (g.st && g.st.t > 110) golfStorySkip(g); return; }
+  if (g.phase === 'settle') { if (g.t > 10) { golfStorySkip(g); g.phase = g.settleNext || 'aim'; g.t = 0; } return; }
+  if (g.phase === 'holed' && !g.rpDone && golfStoryLeft(g) > 0) { if (g.t > 10) golfStorySkip(g); return; }
   if (g.phase === 'fly' && g.td) { if (g.td.n > 8 || g.td.roll || g.t > 8) golfTdSkip(g, GH()[g.hole]); return; }
   if (g.phase === 'fly') { if (g.t > 8 && !(g.fx && g.fx.hit > 0)) golfFlySkip(g, GH()[g.hole]); return; }   // 不想看滾動：點一下略過
   if (g.phase === 'aim') { g.phase = 'power'; g.t = 0; SFX.coin(); return; }
-  if (g.phase === 'power') { golfShoot(); return; }
+  if (g.phase === 'power') { if (golfPutt()) golfShoot(); else golfSwingStart(g); return; }
+  if (g.phase === 'swing') { if (g.sw.t < 42) g.sw.t = 41; return; }
+  if (g.phase === 'duck') { if (g.duck && g.duck.t > 20) golfDuckEnd(g, GH()[g.hole]); return; }
   if (g.phase === 'holed' && g.t > (golfHioNow(g) ? 165 : 40)) { golfNext(); return; }
   if (g.phase === 'done' && g.t > 60) golfExit();
+}
+// ---- 揮桿特寫：上桿 → 停頓 → 下桿擊球 ----
+const SW_A = { addr: -0.67, top: 2.75, fin: -2.5 };
+function golfSwingStart(g) { g.phase = 'swing'; g.sw = { t: 0, p: g.power, a: g.angle }; g.t = 0; noise(0.5, 0.03); }
+function golfSwingAngle(t) {
+  const ease = u => u * u * (3 - 2 * u);
+  if (t < 8) return SW_A.addr + Math.sin(t * 0.8) * 0.06;                            // 擺一下
+  if (t < 30) return SW_A.addr + (SW_A.top - SW_A.addr) * ease((t - 8) / 22);       // 上桿
+  if (t < 38) return SW_A.top + Math.sin((t - 30) * 0.4) * 0.03;                      // 頂點停頓
+  if (t < 42) return SW_A.top + (SW_A.addr - SW_A.top) * ((t - 38) / 4) ** 2;         // 下桿（越來越快）
+  return SW_A.addr;
+}
+function golfSwingStep(g) {
+  const s = g.sw; s.t++;
+  if (s.t === 10) noise(0.45, 0.04);
+  if (s.t === 30 && s.p >= 85) golfPop(g, pick(['集中……', '呼——', '（社畜之魂燃燒中）']), W / 2, 150, { size: 20, col: '#ffe082', screen: true, life: 30 });
+  if (s.t === 38) { noise(0.18, 0.12); tone(240, 0.16, 'sawtooth', 0.04, 1400); }
+  if (s.t >= 42) { g.power = s.p; g.angle = s.a; g.sw = null; golfShoot(); }
 }
 function golfDir() { const g = G.golf, H0 = GH()[g.hole]; return g.ball.x > H0.hole ? -1 : 1; }      // 打過頭就自動轉身往回打
 function golfPutt() { const g = G.golf, H0 = GH()[g.hole]; return !!g.td || golfOnGreen(H0, g.ball.x); }   // 在果嶺上＝推桿
@@ -5971,7 +6034,7 @@ function golfShoot() {
   { const H0 = GH()[g.hole]; (g.shots = g.shots || []).push({ x: g.ball.x, y: g.ball.y, vx: g.ball.vx, vy: g.ball.vy, noTree: g.ball.noTree, spin: sp, skips: 0, back: false, flop: false, wind: g.wind, dir: d, putt: golfOnGreen(H0, g.last.x), power: g.power, from: Math.abs(g.ball.x - H0.hole), ev: null, tree: false, sand: false, gain: 0 }); }
 }
 function golfPenalty(text) {
-  const g = G.golf; g.strokes++; g.msg = text; g.msgT = 120;
+  const g = G.golf; g.strokes++; g.msg = text; g.msgT = STORY_MIN;
   g.ball = { x: g.last.x, y: g.last.y, vx: 0, vy: 0, rest: true };
 }
 function golfNext() {
@@ -6002,10 +6065,13 @@ function updateGolf() {
   golfCamStep(g, H0);                                         // 追球鏡頭
   golfUpdParts(g); golfFxStep(g, H0);
   if (--g.talkT <= 0 && (g.phase === 'aim' || g.phase === 'power')) { g.talk = pick(GOLF_BOSS_TALK); g.talkT = 260; chatter('durian', 4); }
-  if (g.phase === 'boss') { golfBossStep(); if (g.bp.state === 'summary' && g.bp.t > 320) { g.phase = 'aim'; g.t = 0; } return; }
+  if (g.phase === 'boss') { if (!golfCineStep(g)) golfBossStep(); if (g.bp.state === 'summary' && g.bp.t > 480) { g.phase = 'aim'; g.t = 0; } return; }
   if (g.phase === 'replay') { golfReplayStep(g, H0); return; }
   if (g.phase === 'storm') { golfStormStep(g); return; }
-  if (g.phase === 'holed' && !g.rpDone && g.t > (golfHioNow(g) ? 160 : 36) && golfReplayStart(g, H0)) return;   // 重播精華
+  if (g.phase === 'swing') { golfSwingStep(g); return; }
+  if (g.phase === 'duck') { golfDuckStep(g, H0); return; }
+  if (g.phase === 'settle') { if (golfStoryLeft(g) <= 0 || g.t > 600) { g.phase = g.settleNext || 'aim'; g.t = 0; } return; }
+  if (g.phase === 'holed' && !g.rpDone && g.t > (golfHioNow(g) ? 160 : 36) && golfStoryLeft(g) <= 0 && golfReplayStart(g, H0)) return;   // 劇情看完才重播   // 重播精華
   const tri = (t, per) => { const u = (t % per) / per; return u < 0.5 ? u * 2 : 2 - u * 2; };   // 等速來回（比較好抓時機）
   if (g.phase === 'aim') g.angle = golfPutt() ? 0 : 13 + tri(g.t, 240) * 64;
   if (g.phase === 'aim' && !g.td && !g.noTD && golfOnGreen(H0, g.ball.x)) golfTdEnter(g, H0);       // 上果嶺：切換成俯瞰
@@ -6023,7 +6089,7 @@ function updateGolf() {
 function golfFlySub(g, H0, quiet) {                          // 球走一個子步；回傳 true＝這一桿結束
   if (g.td) return golfTdStep(g, H0, quiet);
   const b = g.ball;
-  const ev = golfPhys(b, H0, g.wind);
+  const ev = golfPhys(b, H0, g.wind), sx = b.x, sy = b.y;
   if (!ev && golfRollOnGreen(g, H0, b)) { golfTdFromRoll(g, H0, b, quiet); return false; }   // 滾上果嶺：切換成俯瞰
   const fin = ['water', 'oob', 'holed', 'rest'].includes(ev);
   if (ev && ev !== 'rest' && (!quiet || fin)) golfLandFx(g, ev, b, H0, false);
@@ -6032,10 +6098,11 @@ function golfFlySub(g, H0, quiet) {                          // 球走一個子�
       if (['water', 'oob', 'holed', 'rest'].includes(ev)) { sh.ev = ev; sh.end = b.x; sh.gain = ev === 'water' || ev === 'oob' ? -999 : sh.from - Math.abs(b.x - H0.hole); sh.endDist = Math.abs(b.x - H0.hole); sh.onGreen = ev === 'holed' || golfOnGreen(H0, b.x); } } }
   if (ev === 'tree') { if (!quiet) SFX.bump(); g.msg = '🌳 打到樹了！'; g.msgT = 80; }
   if (ev === 'water') {
+    if (golfDuckLucky(b)) { golfDuckStart(g, H0, b); return true; }   // 🦆 鴨子救援
     SFX.splash();
-    golfPenalty('💦 下水了！罰一桿（桿弟：「戰術性下水！」）'); g.phase = 'aim'; g.t = 0; return true;
+    golfPenalty('💦 下水了！罰一桿（桿弟：「戰術性下水！」）'); g.phase = 'aim'; g.t = 0; golfMaybeSettle(g, sx, sy); return true;
   }
-  if (ev === 'oob') { golfPenalty('🚫 出界！罰一桿'); g.phase = 'aim'; g.t = 0; return true; }
+  if (ev === 'oob') { golfPenalty('🚫 出界！罰一桿'); g.phase = 'aim'; g.t = 0; golfMaybeSettle(g, clamp(sx, 40, golfLen(H0) - 40), sy); return true; }
   if (ev === 'holed') {
     g.me[g.hole] = g.strokes; golfAdvReact(g, H0, true);
     if (g.strokes === 1) { g.hio = true; SFX.win(); g.msg = ''; g.fx.fw = 220; golfPop(g, '🏆 一桿進洞！！！', W / 2, 140, { size: 44, col: '#fff59d', burst: '#c62828', screen: true, life: 150 }); golfPop(g, pick(['桿弟當場昏倒', '老闆的下巴掉到果嶺上', '遠方的會館開始放鞭炮']), W / 2, 210, { size: 18, screen: true, life: 150 }); } else { SFX.ding(); g.msg = ''; }
@@ -6048,9 +6115,9 @@ function golfFlySub(g, H0, quiet) {                          // 球走一個子�
       golfPop(g, pick(['🤝 OK 球！（多算一桿）', '🤝 這球給你！（老闆難得大方）']), W / 2, 160, { size: 26, col: '#fff59d', screen: true, life: 90 }); g.phase = 'holed'; g.t = 0; return true;
     }
     golfAdvReact(g, H0, false);
-    if (g.strokes >= Math.max(7, H0.par + 4)) { g.me[g.hole] = g.strokes + 1; g.msg = '老闆：「好啦好啦，算你進了」'; g.msgT = 120; g.phase = 'holed'; g.t = 0; return true; }
+    if (g.strokes >= Math.max(7, H0.par + 4)) { g.me[g.hole] = g.strokes + 1; g.msg = '老闆：「好啦好啦，算你進了」'; g.msgT = STORY_MIN; g.phase = 'holed'; g.t = 0; return true; }
     if (g.wx === 'storm' && !g.stormHit && Math.random() < 0.65) { golfStorm(g); return true; }   // 午後雷陣雨
-    g.phase = 'aim'; g.t = 0; return true;
+    g.phase = 'aim'; g.t = 0; golfMaybeSettle(g, sx, sy); return true;
   }
   return false;
 }
@@ -6085,11 +6152,12 @@ function drawScorecard(x, y, hi) {                         // 記分卡：你 vs
   const d = sum(g.me) - sum(g.claim);
   return { d, me: sum(g.me), claim: sum(g.claim), real: sum(g.boss) };
 }
-function drawGolfer(x, y, s, swing, face = 1, putt = false) {   // 阿葡拿球桿
+function drawGolfer(x, y, s, swing, face = 1, putt = false, clubA = null, trail = null) {   // 阿葡拿球桿
   ctx.fillStyle = 'rgba(0,30,0,.25)'; ell(x, y + 1, 11 * s, 2.6 * s); ctx.fill();
   ctx.save(); ctx.translate(x, y); ctx.scale(face, 1); ctx.translate(-x, -y);
   drawHero(x, y, s, 1, 0, false, { happy: true });
-  const k = swing > 0 ? swing / 14 : 0, a = swing > 0 ? -2.2 + (1 - k) * 3.2 : -2.1;
+  const k = swing > 0 ? swing / 14 : 0, a = clubA != null ? clubA : swing > 0 ? -2.2 + (1 - k) * 3.2 : -2.1;
+  if (trail != null) { const a0 = Math.min(a, trail), a1 = Math.max(a, trail); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 4 * s; ctx.beginPath(); ctx.arc(x + 6 * s, y - 14 * s, 23 * s, Math.PI / 2 + a0, Math.PI / 2 + a1); ctx.stroke(); }
   ctx.save(); ctx.translate(x + 6 * s, y - 14 * s); ctx.rotate(a);
   ctx.strokeStyle = '#cfd8dc'; ctx.lineWidth = 1.7; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 22 * s); ctx.stroke();
   ctx.strokeStyle = '#263238'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, -1); ctx.lineTo(0, 5 * s); ctx.stroke();
@@ -6103,7 +6171,7 @@ function drawGolf() {
   const g = G.golf, H0 = GH()[g.hole], len = golfLen(H0), cv = g.cv || golfView(g, H0), z = cv.z, cam = cv.x - W / 2 / z, fx = g.fx || {};
   const shx = fx.shake > 0.3 ? rand(-fx.shake, fx.shake) : 0, shy = fx.shake > 0.3 ? rand(-fx.shake, fx.shake) * 0.7 : 0;
   const toS = (x, y) => [(x - cv.x) * z + W / 2 + shx, (y - cv.y) * z + H * 0.45 + shy];
-  const putting = g.phase === 'aim' || g.phase === 'power', fdP = putting ? golfDir() : (g.dir || 1);
+  const putting = g.phase === 'aim' || g.phase === 'power', fdP = putting || g.phase === 'swing' ? golfDir() : (g.dir || 1);
   const angry = g.phase === 'done' && g.result && /贏了/.test(g.result.title) ? 'angry' : 'normal';
   const bad = x => (H0.water && x > H0.water[0] - 40 && x < H0.water[1] + 40) || golfSands(H0).some(s => x > s[0] - 14 && x < s[1] + 14);
   const okSpot = x => x > 8 && x < len - 8 && !bad(x);
@@ -6118,7 +6186,10 @@ function drawGolf() {
     const gx = ax - 118 * bd; if (okSpot(gx)) { drawGolfer(gx, golfGround(H0, gx), 1.2, 0, bd, false); if (golfWet(g)) drawRainCloud(gx, golfGround(H0, gx) - 60); }
     cadX = safe(ax - 72 * bd, bd); if (okSpot(cadX)) { drawCaddie(cadX, golfGround(H0, cadX), bd); if (g.wigOnCaddie) drawWig({ x: cadX, y: golfGround(H0, cadX) - 50, rot: -0.12 * bd }); } else cadX = null;
     durX = ax - 30 * bd; durGy = golfGround(H0, durX);
-    ctx.save(); ctx.translate(durX, durGy); ctx.scale(bd, 1); if (B.state === 'whiff') ctx.rotate(Math.sin(B.t * 0.35) * 0.35 * Math.max(0, 1 - B.t / 50)); ctx.translate(-durX, -durGy); drawGolfDurian(durX, durGy, 0.28, 'normal', true, g.bald); ctx.restore();
+    ctx.save(); ctx.translate(durX, durGy); ctx.scale(bd, 1); if (B.state === 'whiff') ctx.rotate(B.wk === 'whiff' ? (B.t < 10 ? -B.t * 0.05 : B.t < 18 ? -0.5 + (B.t - 10) * 0.16 : 0.78 - Math.min(0.78, (B.t - 18) * 0.03)) + Math.sin(B.t * 0.9) * 0.04 * (B.t > 18 ? 1 : 0) : Math.sin(B.t * 0.35) * 0.35 * Math.max(0, 1 - B.t / 50)); if (B.state === 'kick' && B.t < 14) ctx.rotate(-0.25 * Math.sin(B.t / 14 * Math.PI)); ctx.translate(-durX, -durGy); drawGolfDurian(durX, durGy, 0.28, 'normal', true, g.bald); ctx.restore();
+    if (B.state === 'whiff' && B.wk === 'whiff' && B.t > 10 && B.t < 24) { ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(durX + 14 * bd, durGy - 30, 34, bd > 0 ? -2.4 : -0.7, bd > 0 ? 0.6 : 3.8); ctx.stroke(); txt('咻～', durX + 46 * bd, durGy - 60, 14, '#fff', 'center', { stroke: '#263238', sw: 3 }); }
+    if (B.state === 'whiff' && B.wk === 'whiff' && B.t > 24) txt('（球：我還在這裡）', bb.x + 6, bb.y - 14, 5, '#fff', 'center', { stroke: '#263238', sw: 1.5, weight: 'normal' });
+    if (B.state === 'kick' && B.t < 16) { ctx.fillStyle = '#fafafa'; const fx2 = durX + bd * (18 + Math.sin(B.t / 14 * Math.PI) * 22); ell(fx2, durGy - 4, 10, 5, 0.3 * bd); ctx.fill(); ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(durX + 6 * bd, durGy - 10); ctx.lineTo(fx2, durGy - 4); ctx.stroke(); if (B.t > 4) txt('🦶', fx2 + 6 * bd, durGy - 18, 14, '#000', 'center'); }
     if (B.state === 'wig' && B.t > 26) { txt(B.t > 86 ? '💦' : '‼️', durX + 12 * bd, durGy - 62 + Math.sin(FC * 0.3) * 2, 11, '#fff', 'center'); if (B.t > 86 && FC % 30 < 18) txt('✨', durX - 6, durGy - 50, 8, '#fff', 'center'); }
     if (golfWet(g)) drawUmbrella(durX, durGy - 76, cadX != null ? cadX - 21 * bd : durX + 30 * bd, golfGround(H0, cadX != null ? cadX : durX) - 28);
     golfTrail(g, 'b', bb, '255,236,140'); golfBall(H0, bb.x, bb.y, true); drawSpinMarks(bb, bb.spin, bd);
@@ -6131,11 +6202,14 @@ function drawGolf() {
   }
   const b = g.ball, by = golfGround(H0, b.x);
   if (g.phase !== 'boss') {
-    if (putting) drawGolfer(b.x - 24 * fdP, by, 1.4, 0, fdP, golfPutt()); else drawGolfer(g.last.x - 24 * fdP, golfGround(H0, g.last.x), 1.4, g.swing, fdP, golfOnGreen(H0, g.last.x));
+    if (putting) drawGolfer(b.x - 24 * fdP, by, 1.4, 0, fdP, golfPutt(), golfPutt() ? null : SW_A.addr + Math.sin(FC * 0.05) * 0.04);
+    else if (g.phase === 'swing') { const st = g.sw ? g.sw.t : 42; drawGolfer(b.x - 24 * fdP, by, 1.4, 0, fdP, false, golfSwingAngle(st), st >= 39 ? SW_A.top : null); }
+    else if (g.phase === 'fly' && !golfOnGreen(H0, g.last.x)) drawGolfer(g.last.x - 24 * fdP, golfGround(H0, g.last.x), 1.4, 0, fdP, false, SW_A.addr + (SW_A.fin - SW_A.addr) * Math.min(1, g.t / 8), g.t < 10 ? SW_A.addr : null);
+    else drawGolfer(g.last.x - 24 * fdP, golfGround(H0, g.last.x), 1.4, g.swing, fdP, golfOnGreen(H0, g.last.x));
     if (golfWet(g)) { const gx = putting ? b.x - 24 * fdP : g.last.x - 24 * fdP; drawRainCloud(gx, golfGround(H0, gx) - 84); }
     golfTrail(g, 'p', b, golfSpinInfo(b.spin).col);
     if (fx.fire && g.phase === 'fly') { const fg = ctx.createRadialGradient(b.x, b.y, 2, b.x, b.y, 18); fg.addColorStop(0, 'rgba(255,235,59,.9)'); fg.addColorStop(1, 'rgba(255,87,34,0)'); ctx.fillStyle = fg; circ(b.x, b.y, 18); ctx.fill(); }
-    if (g.phase !== 'holed' || Math.abs(b.x - H0.hole) > 3) { golfBall(H0, b.x, b.y, false); drawSpinMarks(b, b.spin, g.dir || 1); }
+    if ((g.phase !== 'holed' || Math.abs(b.x - H0.hole) > 3) && !b.hidden) { golfBall(H0, b.x, b.y, false); drawSpinMarks(b, b.spin, g.dir || 1); }
   }
   if (putting) {                                                // 瞄準線＋軌跡預覽（世界座標）
     const a = g.angle * Math.PI / 180, fd = fdP, putt = golfPutt();
@@ -6145,7 +6219,7 @@ function drawGolf() {
     if (g.phase === 'power') { const pb = { x: b.x, y: b.y, rest: false, noTree: true, spin: putt ? null : g.spin }; [pb.vx, pb.vy] = golfVel(g.angle, g.power, putt, fd, pb.spin);
       ctx.fillStyle = 'rgba(255,255,255,.75)'; for (let i = 0, n = putt ? 22 : 90; i < n; i++) { golfPhys(pb, H0, 0); if (i % 6 === 0) { circ(pb.x, pb.y, 2); ctx.fill(); } if (pb.rest) break; } }
   }
-  drawGolfGagWorld(g, H0); if (g.wig) drawWig(g.wig); golfDrawParts(g);
+  drawGolfGagWorld(g, H0); if (g.wig) drawWig(g.wig); drawGolfDuck(g, H0); golfDrawParts(g);
   ctx.restore();
   drawGolfFinish(g);
   drawGolfFxScreen(g, H0, toS);
@@ -6162,7 +6236,7 @@ function drawGolf() {
     txt(`😈 老闆先打｜${B.label || '準備中…'}`, W / 2, 85, 16, '#2e7d32', 'center');
     if (B.note && B.state !== 'summary') txt(B.note, W / 2, 124, 16, '#fff', 'center', { stroke: '#1b5e20', sw: 5 });
     drawGolfWigUI(g);
-    if (B.state !== 'summary' && B.state !== 'wig' && FC % 50 < 34) txt(isTouch ? '點一下快轉' : '按空白鍵快轉', W / 2, H - 70, 14, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
+    if (B.state !== 'summary' && B.state !== 'wig' && !g.cine && FC % 50 < 34) txt(isTouch ? '點一下快轉' : '按空白鍵快轉', W / 2, H - 70, 14, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
     if (B.state === 'summary') {
       const real = g.boss[g.hole], claim = g.claim[g.hole], cheat = claim < real;
       ctx.fillStyle = 'rgba(255,255,255,.96)'; rr(180, 110, 600, 150, 14); ctx.fill(); ctx.strokeStyle = cheat ? '#c62828' : '#2e7d32'; ctx.lineWidth = 3; ctx.stroke();
@@ -6193,7 +6267,7 @@ function drawGolf() {
   txt(`⛳ ${g.wx ? GOLF_WX[g.wx].icon + ' ' : ''}${H0.name}｜Par ${H0.par}｜這洞第 ${g.strokes} 桿`, 26, 37, 16, '#fff');
   txt(`風 ${g.wind > 0 ? '→' : g.wind < 0 ? '←' : '·'} ${Math.abs(g.wind).toFixed(1)}　總桿：你 ${meT}／老闆「${bT}」`, W - 120, 37, 15, '#e8f5e9', 'right');
   if (g.msgT > 0 && g.msg) txt(g.msg, W / 2, 96, 22, '#fff', 'center', { stroke: '#1b5e20', sw: 6 });
-  if (g.phase === 'holed' && g.t > (golfHioNow(g) ? 165 : 38)) {
+  if (g.phase === 'holed' && g.rpDone && g.t > (golfHioNow(g) ? 165 : 38)) {
     ctx.fillStyle = 'rgba(255,255,255,.96)'; rr(W / 2 - 290, 70, 580, 290, 14); ctx.fill(); ctx.strokeStyle = '#2e7d32'; ctx.lineWidth = 3; ctx.stroke();
     txt(g.hio && g.me[g.hole] === 1 ? '🏆 一桿進洞！！' : `進洞！這洞 ${g.me[g.hole]} 桿`, W / 2, 108, 24, '#2e7d32', 'center');
     const d = g.me[g.hole] - g.claim[g.hole];
@@ -6211,7 +6285,9 @@ function drawGolf() {
     g.result.lines.forEach((l, i) => txtFit(l, W / 2, 292 + i * 34, 560, 17, i === g.result.lines.length - 1 ? '#e65100' : '#4a3b5c', 'center'));
     if (g.t > 60 && FC % 60 < 42) txt(g.daily ? (isTouch ? '點一下回出勤卡' : '按 Enter 回出勤卡') : isTouch ? '點一下回標題' : '按 Enter 回標題', W / 2, 500, 15, '#2e7d32', 'center');
   }
-  if (g.phase !== 'done' && !G.capture) drawBtn(W - 120, H - 50, 100, 34, '◀ 不打了', golfExit, '#455a64');
+  if ((g.phase === 'settle' || (g.phase === 'holed' && !g.rpDone && golfStoryLeft(g) > 0)) && g.t > 30 && FC % 50 < 36) txt(isTouch ? '點一下繼續 ▶' : '按空白鍵繼續 ▶', W / 2, H - 70, 15, '#fff', 'center', { stroke: '#1b5e20', sw: 4 });
+  drawGolfCine(g);
+  if (g.phase !== 'done' && !G.capture && !g.cine) drawBtn(W - 120, H - 50, 100, 34, '◀ 不打了', golfExit, '#455a64');
 }
 function drawGolfMap(g, H0, cam, vw = W) {                            // 長洞的小地圖（轉播風）
   const len = golfLen(H0), x0 = 18, y0 = 58, w = 210, hgt = 34, mx = x => x0 + 8 + x / len * w, my = y => y0 + 6 + clamp((y - 300) / 200, 0, 1) * (hgt - 10);
@@ -6362,7 +6438,19 @@ function drawGolfGround(g, H0, cam, vw = W) {                        // 球場�
       ctx.strokeStyle = '#557a2a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x, wy + 2); ctx.quadraticCurveTo(x + sway * 0.4, wy - hgt / 2, x + sway, wy - hgt); ctx.stroke();
       if (k % 2 === 0) { ctx.fillStyle = '#6d4c2f'; ell(x + sway * 0.95, wy - hgt + 6, 2.4, 6, sway * 0.03); ctx.fill(); }
     }
-    txt('水池（老闆的球都在這裡）', (xl + xr) / 2, wy + 74, 12, '#e1f5fe', 'center', { weight: 'normal', stroke: 'rgba(10,50,80,.6)', sw: 3 });
+    txt(H0.waterName || '水池（老闆的球都在這裡）', (xl + xr) / 2, wy + 74, 12, '#e1f5fe', 'center', { weight: 'normal', stroke: 'rgba(10,50,80,.6)', sw: 3 });
+  }
+  for (const [i0, i1] of (H0.islands || [])) {                                                    // 湖中小島
+    const top = golfGround(H0, (i0 + i1) / 2), gb2 = ctx.createLinearGradient(0, top, 0, H); gb2.addColorStop(0, '#8d6e63'); gb2.addColorStop(0.15, '#6d4c41'); gb2.addColorStop(1, '#3e2723');
+    ctx.fillStyle = gb2; ctx.beginPath(); ctx.moveTo(i0 - 22, golfGround(H0, i0 - 22)); golfLine(H0, i0 - 22, i1 + 22); ctx.lineTo(i1 + 40, H); ctx.lineTo(i0 - 40, H); ctx.closePath(); ctx.fill();
+    golfStrip(H0, i0, i1, 12); ctx.fillStyle = '#6cc04a'; ctx.fill(); ctx.save(); ctx.clip(); ctx.fillStyle = 'rgba(255,255,255,.1)'; for (let x = i0; x < i1; x += 20) ctx.fillRect(x, 0, 10, H); ctx.restore();
+    ctx.fillStyle = 'rgba(111,203,239,.55)'; ctx.fillRect(i0 - 40, H0.water[2], i1 - i0 + 80, 3);
+    const px = i0 + 26, py = top;                                                                    // 椰子樹＋小牌子
+    ctx.strokeStyle = '#8d6e63'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(px, py); ctx.quadraticCurveTo(px - 8, py - 30, px + 4, py - 58); ctx.stroke();
+    for (let k = 0; k < 5; k++) { const a = -2.6 + k * 0.55 + Math.sin(FC * 0.04 + k) * 0.06 + g.wind * 0.08; ctx.strokeStyle = '#388e3c'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(px + 4, py - 58); ctx.quadraticCurveTo(px + 4 + Math.cos(a) * 18, py - 58 + Math.sin(a) * 18 - 6, px + 4 + Math.cos(a) * 32, py - 58 + Math.sin(a) * 32 + 6); ctx.stroke(); }
+    ctx.fillStyle = '#6d4c41'; circ(px + 2, py - 54, 3.5); ctx.fill(); circ(px + 8, py - 55, 3.5); ctx.fill();
+    const sx = i1 - 30; ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx, py); ctx.lineTo(sx, py - 26); ctx.stroke();
+    ctx.fillStyle = '#fff8e1'; rr(sx - 34, py - 44, 68, 20, 4); ctx.fill(); txt('老闆的小島', sx, py - 30, 10, '#5d4037', 'center');
   }
   const skip = x => (x > g0 - 14 && x < g1 + 14) || golfSands(H0).some(s => x > s[0] - 2 && x < s[1] + 2) || (H0.water && x > wxl - 3 && x < wxr + 3);
   ctx.strokeStyle = '#a4e07e'; ctx.lineWidth = 1.5; ctx.beginPath(); let pen = false;
@@ -6493,10 +6581,15 @@ function golfFlying(g) {
 function golfView(g, H0) {                                   // 鏡頭目標：畫面中心看的世界座標＋縮放
   const len = golfLen(H0), fl = golfFlying(g), fx = g.fx || {};
   let x = golfCamTarget(g, H0) + W / 2, y = H * 0.45, z = 1;
-  if (g.phase === 'boss' && g.bp && g.bp.state === 'wig') { const t = g.bp.t, hd = golfWigHead(g, H0);     // 名場面鏡頭：頭→帽子→禿頭
+  const ct = g.phase === 'boss' && g.cine && g.cine.kind !== 'wig' && g.cine.kind !== 'bald' ? golfCineTarget(g, H0) : null;
+  if (ct) { x = ct.x; y = ct.y; z = ct.z; }
+  else if (g.phase === 'settle' && g.settleCam) { x = g.settleCam.x; y = g.settleCam.y - 24; z = 1.35; }
+  else if (g.phase === 'duck' && g.duck) { x = g.duck.x + g.duck.dir * 40; y = g.duck.y - 30; z = 1.7; }
+  else if (g.phase === 'boss' && g.bp && g.bp.state === 'wig') { const t = g.bp.t, hd = golfWigHead(g, H0);     // 名場面鏡頭：頭→帽子→禿頭
     if (t < 26) { x = hd.x; y = hd.y; z = 1.5 + t / 26 * 0.6; } else if (t < 86 && g.wig) { x = g.wig.x; y = g.wig.y; z = 1.75; } else { x = hd.x; y = hd.y - 4; z = 2.4; } }
   else if (fl) { z = fx.slow > 0 || fl.rp ? 1.6 : fl.boss ? 1.18 : 1.34; x = fl.b.x + (fl.b.vx || 0) * 12; y = fl.b.y - 6; }        // 追球
   else if (g.phase === 'replay') { z = 1.4; x = g.ball.x; y = g.ball.y - 30; }
+  else if (g.phase === 'swing') { const d = golfDir(), t = g.sw ? g.sw.t : 0; x = g.ball.x - 18 * d; y = golfGround(H0, g.ball.x) - 40; z = 2.2 + Math.min(0.7, t / 40 * 0.7); }   // 揮桿特寫
   else if ((g.phase === 'aim' || g.phase === 'power') && golfOnGreen(H0, g.ball.x)) { x = (g.ball.x + H0.hole) / 2; y = golfGround(H0, H0.hole) - 34; z = clamp(560 / (Math.abs(H0.hole - g.ball.x) + 170), 1.3, 2.1); }   // 推桿：看清楚果嶺
   else if (g.phase === 'holed' && g.t < (golfHioNow(g) ? 170 : 55)) { z = 1.45; x = H0.hole; y = golfGround(H0, H0.hole) - 30; }             // 進洞特寫
   const hw = W / 2 / z; x = clamp(x, hw, Math.max(hw, len - hw)); y = Math.min(y, H - H * 0.55 / z);
@@ -6504,11 +6597,26 @@ function golfView(g, H0) {                                   // 鏡頭目標：�
 }
 function golfCamStep(g, H0) {
   const v = golfView(g, H0), c = g.cv || (g.cv = { ...v }), fly = !!golfFlying(g);
-  const wig = g.phase === 'boss' && g.bp && g.bp.state === 'wig', k = wig ? 0.16 : fly ? 0.13 : 0.06; c.x += (v.x - c.x) * k; c.y += (v.y - c.y) * k; c.z += (v.z - c.z) * (wig ? 0.12 : fly ? 0.05 : 0.07);
+  const wig = (g.phase === 'boss' && g.bp && g.bp.state === 'wig') || g.phase === 'swing' || !!g.cine, k = wig ? 0.16 : fly ? 0.13 : 0.06; c.x += (v.x - c.x) * k; c.y += (v.y - c.y) * k; c.z += (v.z - c.z) * (wig ? 0.12 : fly ? 0.05 : 0.07);
   g.cam = c.x - W / 2 / c.z;
 }
+function golfStoryLeft(g) {                                       // 劇情文字還要顯示幾格
+  const fx = g.fx; if (!fx) return 0; let m = 0;
+  for (const t of fx.txt || []) if (t.story) m = Math.max(m, t.life - t.t);
+  if (fx.gag && fx.gag.s) m = Math.max(m, 330 - fx.gag.t);
+  if (g.msgT > 0 && g.msg) m = Math.max(m, g.msgT);
+  return Math.max(0, m);
+}
+function golfStorySkip(g) { for (const t of (g.fx && g.fx.txt) || []) if (t.story) t.life = Math.min(t.life, t.t + 10); if (g.fx) g.fx.gag = null; g.msgT = Math.min(g.msgT || 0, 10); }
+function golfMaybeSettle(g, x, y) {                                // 打完球：有劇情就停在原地，等文字看完（點一下可跳過）
+  if (g.td || golfStoryLeft(g) <= 0) return;
+  g.settleCam = { x, y }; g.settleNext = g.phase; g.phase = 'settle'; g.t = 0;
+}
 function golfFxInit(g) { g.fx = { shake: 0, flash: 0, hit: 0, slow: 0, gag: null, txt: [], fire: false, stats: null, lastGag: g.fx && g.fx.lastGag, fw: 0, focus: 0 }; }
-function golfPop(g, s, x, y, o = {}) { (g.fx.txt = g.fx.txt || []).push({ s, x, y, t: 0, life: o.life || 70, size: o.size || 26, col: o.col || '#fff', burst: o.burst || null, screen: !!o.screen }); }
+function golfPop(g, s, x, y, o = {}) {
+  const story = !o.burst && !o.quick && (o.screen ? s.length > 6 : s.length > 10);   // 劇情句子：至少 5 秒，不會重疊
+  if (story && o.screen) for (let k = 0; k < 6 && g.fx.txt.some(t => t.story && t.screen && Math.abs(t.y - y) < 26 && t.life - t.t > 20); k++) y += 30;
+  (g.fx.txt = g.fx.txt || []).push({ story, s, x, y, t: 0, life: story ? Math.max(o.life || 70, STORY_MIN) : (o.life || 70), size: o.size || 26, col: o.col || '#fff', burst: o.burst || null, screen: !!o.screen }); }
 function golfBurst(g, x, y, n, cols, o = {}) {
   for (let i = 0; i < n && g.parts.length < 420; i++) {
     const a = o.up ? -Math.PI / 2 + rand(-o.up, o.up) : rand(0, Math.PI * 2), sp = rand(o.min || 1, o.max || 5);
@@ -6526,7 +6634,7 @@ function golfOnStrike(g, putt, power, boss) {                 // 擊球瞬間：
   if (boss) { golfPop(g, pick(['老闆：「喝！」', '老闆：「看我的！」', '老闆：「這球穩了」']), b.x, b.y - 46, { size: 18, col: '#ffe082', life: 55 }); return; }
   golfPop(g, p >= 92 ? '💥 全壘打？！（不同運動）' : p >= 75 ? 'NICE SHOT!!' : p >= 40 ? '好球！' : '……輕輕的', W / 2, 150, { size: p >= 75 ? 40 : 28, col: p >= 75 ? '#ffeb3b' : '#fff', burst: p >= 75 ? '#e53935' : null, screen: true, life: 60 });
   fx.fire = p >= 90;
-  if (fx.fire) { golfPop(g, '🔥 燃燒吧！社畜之魂！！', W / 2, 196, { size: 22, col: '#ffccbc', screen: true, life: 90 }); tone(90, 0.6, 'sawtooth', 0.12, 40); }
+  if (fx.fire) { golfPop(g, '🔥 燃燒吧！社畜之魂！！', W / 2, 196, { size: 22, col: '#ffccbc', screen: true, life: 90, quick: true }); tone(90, 0.6, 'sawtooth', 0.12, 40); }
   if (p >= 65) fx.stats = { spd: Math.round(95 + p * 0.9 + rand(-4, 4)), rpm: Math.round(2400 + rand(0, 1400)), fav: pick(['+1', '-1', '-2', '±0', '+0.5']), t: 0 };
   if (Math.random() < 0.4) {                                    // 隨機搞笑片段（不影響球的路線）
     let k = pick(GOLF_GAGS); if (k === fx.lastGag) k = pick(GOLF_GAGS);
@@ -6550,6 +6658,13 @@ function golfLandFx(g, ev, b, H0, boss) {                     // 落地、沙坑
     if (Math.random() < 0.45) golfPop(g, pick(['🐟 魚：「謝謝老闆加菜」', '🦆 鴨子：「又來一顆？」', '🐢 烏龜默默把球收藏起來']), W / 2, 236, { size: 16, screen: true, life: 110 }); }
   if (ev === 'tree') { golfBurst(g, b.x, b.y, 18, ['#2e7d32', '#43a047', '#66bb6a', '#9ccc65'], { max: 4, gr: 0.05, kind: 'leaf', life: 90, drag: 0.97 }); fx.shake = 7; golfPop(g, '咚！🌳', b.x, b.y - 30, { size: 26, life: 60 });
     if (Math.random() < 0.5) golfBurst(g, b.x, b.y - 20, 2, ['#455a64'], { up: 0.6, min: 3, max: 4, gr: -0.02, kind: 'bird', life: 120, drag: 1 }); }
+  if (ev === 'pin') { fx.shake = 5; tone(2093, 0.5, 'sine', 0.12); tone(3136, 0.35, 'sine', 0.06, 0, 0.02); golfBurst(g, b.x, b.y, 12, ['#fff', '#fff59d'], { max: 3, gr: 0.05, kind: 'star', life: 30 });
+    if (!boss) golfPop(g, b.pinDrop ? '叮！……掉進去了！？' : '叮！打到旗桿！', b.x, b.y - 30, { size: b.pinDrop ? 26 : 22, col: '#fff59d', burst: b.pinDrop ? '#e53935' : null, life: 80 });
+    else golfPop(g, b.pinDrop ? '老闆的球打到旗桿……掉進去了？' : '老闆的球打到旗桿！', W / 2, 170, { size: 18, screen: true, life: 80 }); }
+  if (ev === 'boomerang') { fx.shake = 3; tone(600, 0.4, 'sine', 0.06, 200);
+    golfPop(g, boss ? '老闆的球被風吹回來了！' : pick(['球：「外面風太大了，我回來了」', '球：「我不幹了，我要回家」', '回力球？！']), W / 2, 180, { size: 20, col: '#e1f5fe', screen: true, life: 110 }); }
+  if (ev === 'ceil') { fx.shake = 6; golfBurst(g, b.x, b.y, 14, ['#e1f5fe', '#fff', '#b3e5fc'], { max: 4, life: 40 }); if (!boss) golfPop(g, pick(['撞到玻璃天花板了！', '叩！（升遷失敗）', '天花板：「你過不去的」']), b.x, b.y - 20, { size: 20, col: '#e1f5fe', life: 60 }); tone(1800, 0.12, 'triangle', 0.06); }
+  if (ev === 'wall') { fx.shake = 7; const ck = H0.walls && H0.walls[0][3] === 'cake'; golfBurst(g, b.x, b.y, 16, ck ? ['#f8bbd0', '#fff', '#ec407a'] : ['#ff7043', '#ffca28', '#8d3a2a'], { max: 4, life: 40 }); if (!boss) golfPop(g, ck ? pick(['噗！撞到蛋糕 🎂', '奶油濺出來了！']) : pick(['存取被拒！🔥', '被防火牆擋下來了！', '403 Forbidden']), b.x, b.y - 24, { size: 20, col: ck ? '#fce4ec' : '#ffccbc', life: 60 }); SFX.bump(); }
   if (ev === 'oob') { fx.shake = 5; if (!boss) golfPop(g, pick(['（遠方傳來：「FORE——！」）', '（隔壁球場傳來慘叫）', '（球去追求自由了）']), W / 2, 236, { size: 16, screen: true, life: 110 }); }
   if (ev === 'holed') {
     const hx = H0.hole, hy = golfGround(H0, hx);
@@ -6575,10 +6690,10 @@ function golfFxStep(g, H0) {                                  // 每格：特效
   if (!fly) fx.fire = false;
   const gg = fx.gag;
   if (gg) { gg.t++;
-    if (gg.k === 'matrix' && gg.t === 22 && fly) { fx.slow = 110; tone(220, 1.2, 'sine', 0.12, 110); golfPop(g, '⏱ 子 彈 時 間', W / 2, 150, { size: 30, col: '#b2ff59', screen: true, life: 110 }); }
+    if (gg.k === 'matrix' && gg.t === 22 && fly) { fx.slow = 110; tone(220, 1.2, 'sine', 0.12, 110); golfPop(g, '⏱ 子 彈 時 間', W / 2, 150, { size: 30, col: '#b2ff59', screen: true, life: 110, quick: true }); }
     if (gg.k === 'ufo' && gg.t === 10) tone(600, 0.8, 'sine', 0.06, 1400);
     if (gg.k === 'line' && gg.t === 8) { tone(1175, 0.08, 'sine', 0.1); tone(1568, 0.1, 'sine', 0.1, 0, 0.09); }
-    if (gg.t > 170 || (!fly && gg.t > 40 && gg.k !== 'line' && gg.k !== 'tv')) fx.gag = null;
+    if (gg.t > 330 || (!fly && gg.t > 40 && !gg.s && gg.k !== 'line' && gg.k !== 'tv')) fx.gag = null;
   }
   if (fx.fw > 0) { fx.fw--; if (fx.fw % 18 === 0) { const x = H0.hole + rand(-260, 260), y = golfGround(H0, H0.hole) - rand(140, 260); golfBurst(g, x, y, 36, pick([['#ff5252', '#ffeb3b'], ['#40c4ff', '#fff'], ['#b2ff59', '#ffd740'], ['#ea80fc', '#fff']]), { min: 2, max: 6, gr: 0.06, kind: 'star', life: 60, drag: 0.97 }); noise(0.2, 0.08); tone(rand(300, 600), 0.2, 'triangle', 0.06, 80); } }
 }
@@ -6630,25 +6745,25 @@ function drawGolfFxScreen(g, H0, toS) {                       // 螢幕上的浮
   if (gg) { const t = gg.t, b = g.ball, [bx, by] = toS(b.x, b.y);
     const bubble = (s, x, y) => { ctx.font = `bold 14px ${FONT}`; const w = ctx.measureText(s).width + 22; x = clamp(x, 10 + w / 2, W - 10 - w / 2); y = clamp(y, 70, H - 90);
       ctx.fillStyle = 'rgba(255,255,255,.95)'; rr(x - w / 2, y - 16, w, 28, 12); ctx.fill(); txt(s, x, y + 3, 14, '#3e2723', 'center'); };
-    if ((gg.k === 'bird' || gg.k === 'talk' || gg.k === 'ufo') && t > 24 && t < 150) bubble(gg.s, bx, by - 58);
-    if (gg.k === 'drone' && t < 170) { const x = W + 60 - t * 7.5, y = 120 + Math.sin(t * 0.1) * 8;
+    if ((gg.k === 'bird' || gg.k === 'talk' || gg.k === 'ufo') && t > 24 && t < 310) bubble(gg.s, bx, by - 58);
+    if (gg.k === 'drone' && t < 330) { const x = W + 60 - t * 4.2, y = 120 + Math.sin(t * 0.1) * 8;
       ctx.strokeStyle = '#37474f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 18, y); ctx.lineTo(x + 18, y); ctx.stroke(); ctx.fillStyle = '#455a64'; rr(x - 8, y - 4, 16, 8, 3); ctx.fill();
       for (const dx of [-18, 18]) { ctx.fillStyle = 'rgba(120,144,156,.6)'; ell(x + dx, y - 4, 9 + Math.sin(FC) * 3, 2); ctx.fill(); }
       ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y + 4); ctx.lineTo(x, y + 18); ctx.stroke(); ctx.fillStyle = '#fff'; ctx.fillRect(x - 7, y + 18, 14, 17); ctx.fillStyle = '#90a4ae'; for (let i = 0; i < 4; i++) ctx.fillRect(x - 5, y + 21 + i * 3.5, 10, 1);
-      if (t > 15 && t < 150) bubble(gg.s, x, y + 54); }
-    if (gg.k === 'caddie' && t < 170) { const x = -30 + t * 6.5, y = H - 34, legs = Math.sin(t * 0.8) * 5;
+      if (t > 15 && t < 300) bubble(gg.s, x, y + 54); }
+    if (gg.k === 'caddie' && t < 330) { const x = -30 + t * 3.4, y = H - 34, legs = Math.sin(t * 0.8) * 5;
       ctx.strokeStyle = '#4e342e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x - 3, y + 8); ctx.lineTo(x - 3 - legs, y + 20); ctx.moveTo(x + 3, y + 8); ctx.lineTo(x + 3 + legs, y + 20); ctx.stroke();
       const og = ctx.createRadialGradient(x - 4, y - 4, 2, x, y, 14); og.addColorStop(0, '#ffcc80'); og.addColorStop(1, '#e65100'); ctx.fillStyle = og; circ(x, y, 12); ctx.fill();
       ctx.fillStyle = '#f5ecd2'; ell(x, y - 10, 17, 4); ctx.fill(); ctx.fillStyle = '#3e2723'; circ(x + 4, y - 3, 1.5); ctx.fill(); circ(x + 9, y - 3, 1.5); ctx.fill();
       ctx.fillStyle = 'rgba(210,190,150,.6)'; for (let i = 0; i < 4; i++) { circ(x - 16 - i * 9, y + 18 - (i % 2) * 3, 5 - i); ctx.fill(); }
-      txt('💦', x - 12, y - 14, 12, '#fff', 'center'); if (t > 10 && t < 140) bubble(gg.s, x + 40, y - 40); }
-    if (gg.k === 'line' && t < 190) { const k = t < 14 ? t / 14 : t > 170 ? (190 - t) / 20 : 1, y = -60 + k * 122, X = W / 2 + 70;
+      txt('💦', x - 12, y - 14, 12, '#fff', 'center'); if (t > 10 && t < 300) bubble(gg.s, clamp(x + 40, 140, W - 140), y - 40); }
+    if (gg.k === 'line' && t < 330) { const k = t < 14 ? t / 14 : t > 310 ? (330 - t) / 20 : 1, y = -60 + k * 122, X = W / 2 + 70;
       ctx.fillStyle = 'rgba(250,250,250,.97)'; rr(X - 200, y, 400, 52, 14); ctx.fill(); ctx.fillStyle = '#06c755'; rr(X - 188, y + 10, 32, 32, 8); ctx.fill(); txt('💬', X - 172, y + 32, 16, '#fff', 'center');
       txt('通知・剛剛', X - 146, y + 20, 11, '#9e9e9e', 'left', { weight: 'normal' }); txt(gg.s.replace('💬 ', ''), X - 146, y + 40, 14, '#212121', 'left'); }
-    if (gg.k === 'tv' && t < 200) { ctx.fillStyle = '#c62828'; rr(W - 196, 62, 176, 26, 6); ctx.fill(); txt('🔴 LIVE 轉播中', W - 108, 80, 13, '#fff', 'center');
+    if (gg.k === 'tv' && t < 330) { ctx.fillStyle = '#c62828'; rr(W - 196, 62, 176, 26, 6); ctx.fill(); txt('🔴 LIVE 轉播中', W - 108, 80, 13, '#fff', 'center');
       ctx.fillStyle = 'rgba(0,0,0,.55)'; rr(W - 196, 90, 176, 22, 6); ctx.fill(); txt('觀眾 3 人（含老闆）', W - 108, 106, 12, '#fff', 'center', { weight: 'normal' }); }
   }
-  if (fx.stats && fx.stats.t < 200) { const s = fx.stats, k = Math.min(1, s.t / 12, (200 - s.t) / 12), x = -300 + k * 316, y = H - 112;     // 轉播字卡
+  if (fx.stats && fx.stats.t < 200 && g.phase !== 'aim' && g.phase !== 'power') { const s = fx.stats, k = Math.min(1, s.t / 12, (200 - s.t) / 12), x = -300 + k * 316, y = H - 112;     // 轉播字卡
     ctx.fillStyle = 'rgba(13,71,161,.88)'; rr(x, y, 290, 50, 6); ctx.fill(); ctx.fillStyle = '#ffd54f'; ctx.fillRect(x, y, 6, 50);
     txt(`球速 ${s.spd} km/h｜轉速 ${s.rpm} rpm`, x + 16, y + 21, 14, '#fff');
     txt(`老闆好感度 ${s.fav}｜今日加班時數 不變`, x + 16, y + 41, 12, '#bbdefb', 'left', { weight: 'normal' }); }
@@ -6688,7 +6803,7 @@ function golfStormStep(g) {
   if (s.t === 20) golfPop(g, '⚡ 午後雷陣雨！！', W / 2, 150, { size: 40, col: '#fff59d', burst: '#263238', screen: true, life: 200 });
   if (s.t === 60) { golfPop(g, '老闆宣布：「雨天不算！這洞重打！」', W / 2, 220, { size: 22, screen: true, life: 160 }); chatter('durian', 5); }
   if (s.t === 105) golfPop(g, s.me < s.claim ? `（你這洞本來快贏他了…他算得很清楚）` : `（老闆這洞自稱 ${s.claim} 桿，看起來是真的怕打雷）`, W / 2, 262, { size: 15, screen: true, life: 120 });
-  if (s.t >= 215) { g.wxs[g.hole] = 'rain'; g.stormed = (g.stormed || 0) + 1; golfStartHole(); golfPop(g, '🌦️ 雨變小了…重打這洞', W / 2, 200, { size: 22, screen: true, life: 140 }); }
+  if (s.t >= 215 && (golfStoryLeft(g) <= 0 || s.t > 600)) { g.wxs[g.hole] = 'rain'; g.stormed = (g.stormed || 0) + 1; golfStartHole(); golfPop(g, '🌦️ 雨變小了…重打這洞', W / 2, 200, { size: 22, screen: true, life: 140 }); }
 }
 function drawGolfWxScreen(g, toS) {                           // 雨絲、閃電
   const wet = golfWet(g) || g.phase === 'storm';
@@ -6795,7 +6910,7 @@ function golfReplayStep(g, H0) {
       if (['water', 'oob', 'holed', 'rest'].includes(ev) || rp.done >= rp.n || (!ev && golfRollOnGreen(g, H0, b))) { rp.end = rp.t; b.rest = true; g.fx.fire = false;
         golfPop(g, rp.best ? (rp.hio ? '🏆' : '👏 漂亮！') : pick(['😱', '🙈', '💀']), W / 2, 170, { size: 40, screen: true, life: 80 }); }
     }
-  } else if (rp.t - rp.end > 95) golfReplayEnd(g);
+  } else if (rp.t - rp.end > 200) golfReplayEnd(g);
 }
 function golfReplayEnd(g) {
   const rp = g.rp; if (!rp) return;
@@ -6930,8 +7045,8 @@ function golfWigStep(g, H0, B) {
     const cx = B.ball.x - 72 * hd.bd; g.wig = { x: hd.x, y: hd.y - 18, x0: hd.x, y0: hd.y - 18, dir, tx: cx, ty: golfGround(H0, cx) - 50, rot: 0, t: 0 }; g.fx.flash = 0.45; g.fx.shake = 8; noise(0.5, 0.25); tone(1400, 0.6, 'sine', 0.08, 300); buzz(60);
     B.note = '🌀 老闆的「帽子」飛走了！！'; golfPop(g, '咻——！！', W / 2, 165, { size: 40, col: '#fff', burst: '#455a64', screen: true, life: 60 }); }
   if (t === 88) { golfPop(g, '老闆：「那是帽子！不是假髮！」', W / 2, 165, { size: 26, col: '#fff59d', screen: true, life: 110 }); chatter('durian', 6); SFX.nope(); }
-  if (t === 140) { g.caddie = '……（默默戴上）'; g.caddieT = 110; golfPop(g, '（假髮降落在桿弟頭上）', W / 2, 205, { size: 16, screen: true, life: 100 }); }
-  if (t >= 180) { B.state = 'aim'; B.t = 2; B.note = '（老闆若無其事地繼續打球）'; }
+  if (t === 150) { g.caddie = '……（默默戴上）'; g.caddieT = 240; golfPop(g, '（假髮降落在桿弟頭上）', W / 2, 205, { size: 16, screen: true, life: 100 }); }
+  if (t >= 330) { B.state = 'aim'; B.t = 2; B.note = '（老闆若無其事地繼續打球）'; }
 }
 function drawGolfWigUI(g) {                                    // 獨家畫面字卡
   const B = g.bp; if (!B || B.state !== 'wig' || B.t < 28) return;
@@ -7038,6 +7153,7 @@ function golfTdDir(H0, t, aim) {                                // 瞄準方向�
 }
 function golfTdPhys(H0, t, wet) {                               // 俯瞰：球走一個子步
   t.u += t.vu / 2; t.v += t.vv / 2;
+  if (H0.cliff && t.u > H0.cliff) return 'oob';
   const z = golfTdZone(H0, t.u, t.v);
   if (z === 3) { t.u -= t.vu; t.v -= t.vv; t.vu = t.vv = 0; return 'rest'; }
   const fr = z === 0 ? golfGreenFr(H0, wet) : z === 1 ? 0.95 : 0.9; t.vu *= fr; t.vv *= fr;
@@ -7055,7 +7171,7 @@ function golfTdSim(H0, u, v, aim, p, wet) {                      // 模擬一推
 }
 function golfTdEnter(g, H0) {
   g.td = { u: g.ball.x, v: g.pv || 0, vu: 0, vv: 0, aim: 0, trail: [], n: 0 }; g.adv = null; g.angle = 0; g.caddieT = 0;
-  golfPop(g, '🔭 俯瞰果嶺：看清楚左右的坡再推', W / 2 - 40, 120, { size: 17, screen: true, life: 90 });
+  golfPop(g, '🔭 俯瞰果嶺：看清楚左右的坡再推', W / 2 - 40, 120, { size: 17, screen: true, life: 90, quick: true });
 }
 function golfTdRead(g, H0) {                                     // 正確答案＋桿弟（大概一半對）的建議
   const t = g.td, wet = golfWet(g), dist = Math.hypot(H0.hole - t.u, t.v); let best = null; const holedSet = [];
@@ -7083,6 +7199,7 @@ function golfTdStep(g, H0, quiet) {                               // 回傳 true
   g.ball.x = t.u; g.ball.y = golfGround(H0, t.u) - 5; g.pv = t.v;
   if (t.n % 3 === 0) { t.trail.push([t.u, t.v]); if (t.trail.length > 120) t.trail.shift(); }
   if (ev === 'lip' && !quiet) { golfPop(g, pick(['轉出來了！😱', '舔洞而過…', '球：「我只是路過」']), W / 2, 170, { size: 26, col: '#ffcc80', screen: true, life: 70 }); tone(500, 0.15, 'square', 0.06, 200); g.fx.shake = 4; }
+  if (ev === 'oob') { const sh0 = g.shots[g.shots.length - 1]; if (sh0) sh0.ev = 'oob'; g.td = null; g.pv = 0; golfLandFx(g, 'oob', g.ball, H0, false); golfPenalty('🚫 掉下樓頂了！罰一桿'); g.phase = 'aim'; g.t = 0; g.cv = golfView(g, H0); g.cam = g.cv.x - W / 2 / g.cv.z; return true; }
   if (ev !== 'holed' && ev !== 'rest') return false;
   const sh = g.shots[g.shots.length - 1], dc = Math.hypot(t.u - H0.hole, t.v); sh.ev = ev; sh.endDist = dc; sh.gain = t.from - dc; sh.onGreen = true;
   const fin = () => { g.td = null; g.pv = 0; g.ball = { x: H0.hole, y: golfGround(H0, H0.hole) - 5, vx: 0, vy: 0, rest: true }; g.phase = 'holed'; g.t = 0; g.cv = golfView(g, H0); g.cam = g.cv.x - W / 2 / g.cv.z; };
@@ -7098,7 +7215,7 @@ function golfTdStep(g, H0, quiet) {                               // 回傳 true
     golfPop(g, pick(['🤝 OK 球！（多算一桿）', '🤝 這球給你！（老闆難得大方）']), W / 2, 160, { size: 26, col: '#fff59d', screen: true, life: 90 }); return true;
   }
   golfAdvReact(g, H0, false);
-  if (g.strokes >= Math.max(7, H0.par + 4)) { g.me[g.hole] = g.strokes + 1; g.msg = '老闆：「好啦好啦，算你進了」'; g.msgT = 120; fin(); return true; }
+  if (g.strokes >= Math.max(7, H0.par + 4)) { g.me[g.hole] = g.strokes + 1; g.msg = '老闆：「好啦好啦，算你進了」'; g.msgT = STORY_MIN; fin(); return true; }
   if (golfTdZone(H0, t.u, t.v) >= 2) {                          // 滾出果嶺：回到側面視角
     g.td = null; g.pv = 0; g.ball = { x: t.u, y: golfGround(H0, t.u) - 5, vx: 0, vy: 0, rest: true }; g.phase = 'aim'; g.t = 0; g.noTD = false;
     g.cv = golfView(g, H0); g.cam = g.cv.x - W / 2 / g.cv.z; if (!quiet) golfPop(g, '滾出果嶺了…', W / 2, 150, { size: 20, screen: true, life: 70 }); return true;
@@ -7218,6 +7335,314 @@ function drawGolfHud(g, H0) {                                    // 俯瞰模式
   if (g.msgT > 0 && g.msg) txt(g.msg, W / 2, 140, 20, '#fff', 'center', { stroke: '#1b5e20', sw: 6 });
   if (g.caddieT > 0 && g.caddie) txtFit('🍊「' + g.caddie + '」', W - 170, H - 132, 300, 14, '#ffe0b2', 'center', { stroke: '#3e2723', sw: 4 });
   if (!G.capture) drawBtn(W - 120, H - 50, 100, 34, '◀ 不打了', golfExit, '#455a64');
+}
+
+// ---------- 🛗 電梯尷尬 30 秒 ----------
+const ELV_DUR = 1800;                                             // 30 秒
+const ELV_WHO = {
+  boss:  { name: '老闆', col: '#9e9d24' },
+  pm:    { name: 'PM 鸚鵡', emoji: '🦜', col: '#43a047' },
+  hr:    { name: 'HR 章魚', emoji: '🐙', col: '#ec407a' },
+  pine:  { name: '鳳梨同事', emoji: '🍍', col: '#fbc02d' },
+  melon: { name: '西瓜主管', emoji: '🍉', col: '#e53935' },
+};
+// 每題：line＝狀況、ch＝[選項, 尷尬變化, 回應, 旗標]、sil＝[沉默時的尷尬變化, 回應]
+const ELV_Q = {
+  hi:     { line: '（老闆看了你一眼）', ch: [['老闆早！', -10, '老闆：「早。」'], ['今天天氣真好', 8, '老闆：「我們在電梯裡。」'], ['最近在忙什麼？', 4, '老闆：「在想明年的預算……」', 'raise']], sil: [3, '（老闆也拿出了手機）'] },
+  dept:   { line: '老闆：「你是……哪個部門的？」', ch: [['我是阿葡啊！', 12, '老闆：「喔…對對對。」（明顯不記得）'], ['資安部', 4, '老闆：「那我的密碼『葡萄123』安全嗎？」'], ['行銷部', -6, '老闆：「喔～行銷部很棒！」（你不是行銷部）']], sil: [16, '（老闆：……）（你：……）'] },
+  smell:  { line: '（電梯裡飄出一股奇怪的味道……）', ch: [['誰吃榴槤？', 38, '老闆：「……」（老闆就是榴槤）', 'angry'], ['好香喔！', 10, '老闆：「謝謝。」'], ['可以開一下門嗎', 6, '老闆：「這是電梯。」']], sil: [-7, '（大家都默默憋氣）'] },
+  hum:    { line: '（老闆開始哼歌……）', ch: [['一起哼', 14, '（合唱。好尷尬。）'], ['好好聽！', -6, '老闆：「這是我自己寫的。」'], ['這首是……？', 5, '老闆：「公司司歌啊，你沒聽過？」']], sil: [-4, '（你們安靜地聽完了副歌）'] },
+  jolt:   { line: '（電梯突然晃了一下！）', ch: [['抱住老闆', 30, '老闆：「……你可以放開了。」'], ['沒事沒事～', -8, '老闆：「嗯，你很冷靜。」'], ['是不是超重？', 20, '（老闆看了看自己的肚子）', 'angry']], sil: [6, '（兩個人假裝什麼都沒發生）'] },
+  mirror: { line: '（老闆對著電梯鏡子整理頭髮）', ch: [['老闆今天很帥！', -10, '老闆：「我知道。」'], ['那是帽子嗎？', 35, '老闆：「那是帽子。」', 'angry'], ['需要梳子嗎？', 18, '老闆：「……」']], sil: [-4, '（你專心盯著樓層數字）'] },
+  phone:  { line: '老闆接起電話：「喂？我在電梯…對，在跟同事開會。」', ch: [['我們在開會嗎？', 22, '老闆：「現在是了。」'], ['（點頭）對，開會中', -8, '老闆：（滿意地點頭）'], ['要我迴避嗎？', 6, '老闆：「這是電梯。」']], sil: [-6, '（你成為了「開會」的一部分）'] },
+  ghost:  { line: '（門打開了……外面沒有人。門又關上。）', ch: [['……是鬼嗎？', 10, '老闆：「別亂講。這棟樓……算了。」'], ['哈哈哈', 8, '（只有你在笑）'], ['應該是按錯了', -4, '老闆：「嗯。」']], sil: [-2, '（三秒後，冷氣的聲音特別大）'] },
+  weekend:{ line: '老闆：「週末有什麼計畫嗎？」', ch: [['加班！', -12, '老闆：「很好，很好。」'], ['去打高爾夫', 6, '老闆：「喔？下次一起打。」（你的週末沒了）'], ['在家躺平', 14, '老闆：「躺……平？」']], sil: [12, '老闆：「……你不想說也沒關係。」'] },
+  stuck:  { line: '（電梯停了。燈閃了兩下。）', ch: [['按緊急按鈕', -4, '喇叭：「請稍候，維修人員 30 秒到。」'], ['我們會死嗎', 18, '老闆：「……」'], ['這是團隊建立的好機會！', -10, '老闆：「說得好！」']], sil: [8, '（黑暗中，兩個人的呼吸聲）'], fx: 'dark' },
+  diet:   { line: '老闆：「我最近在減肥。」', ch: [['看得出來！', -8, '老闆：「真的嗎！」（很開心）'], ['為什麼？', 12, '老闆：「……你覺得呢？」', 'angry'], ['我也是！', 2, '老闆：「你看起來不用。」']], sil: [9, '（老闆默默收起肚子）'] },
+  pm:     { enter: 'pm', line: 'PM 鸚鵡走進來：「剛好！那個需求可以小改一下嗎？」', ch: [['好啊', -5, '（你的週末沒了）'], ['要排優先順序喔', 9, 'PM：「老闆你看，他在推託。」'], ['這要開會討論', 4, 'PM：「好！現在開！」']], sil: [-10, '（你假裝收訊不好，PM 默默放棄）'] },
+  hr:     { enter: 'hr', line: 'HR 章魚走進來：「大家都在耶！記得填滿意度問卷喔 😊」', ch: [['填過了！', 6, 'HR：「你沒有。」'], ['非常滿意！', -4, '（老闆點了點頭）'], ['問卷是匿名的嗎？', 20, 'HR：「……是呀 😊」（記下來了）']], sil: [-4, 'HR：「😊」（觸手默默記下你的名字）'] },
+  pine:   { enter: 'pine', line: '鳳梨同事走進來：「欸剛好！這個你順便一下。」', ch: [['好喔', -2, '老闆：「你很熱心喔。」'], ['我在忙', 10, '老闆：「忙什麼？」', 'raise'], ['……這是什麼？', 4, '鳳梨：「明天要交的。」']], sil: [-6, '（鳳梨把文件塞進你手裡）'] },
+  melon:  { enter: 'melon', line: '西瓜主管走進來：「老闆好！今天尾牙，晚上要不要喝一杯？」', ch: [['我不喝酒', 12, '（全電梯的人都看著你）'], ['乾杯！', -6, '西瓜：「好！晚上見！」'], ['我要開車', -2, '西瓜：「那你幫大家叫車。」']], sil: [4, '西瓜：「沉默就是答應！」'] },
+};
+const ELV_RAISE = [
+  { line: '老闆突然很認真：「說到這個……你覺得明年調薪多少合理？」', ch: [['老闆決定就好', -15, '老闆：「嗯，很懂事。」'], ['10%', 40, '……（安靜到聽得見冷氣聲）', 'angry'], ['3% 就好', 8, '老闆：「好，那就 2%。」']], sil: [25, '（沉默被當成默認：0%）'] },
+  { line: '老闆：「那你覺得……自己今年表現怎麼樣？」', ch: [['很努力！', -5, '老闆：「努力，嗯。」'], ['普通', 10, '老闆：「我也這麼覺得。」'], ['跟去年一樣', 20, '老闆：「去年你也這樣說。」']], sil: [0, '老闆：「嗯，跟我想的一樣。」'] },
+];
+function openElevator() {
+  initAudio(); const day = todayStr(), plays = ((META.elv && META.elv.plays) || 0);
+  const r = mulberry((hsh(([...day].reduce((s, c) => (s * 31 + c.charCodeAt(0)) % 1000003, 7) + plays * 977) | 0) % 1e9) | 0), pk = a => a[Math.floor(r() * a.length)];
+  const pool = ['dept', 'smell', 'hum', 'jolt', 'mirror', 'phone', 'ghost', 'weekend', 'stuck', 'diet'], deck = [];
+  while (pool.length) deck.push(pool.splice(Math.floor(r() * pool.length), 1)[0]);
+  const guests = ['pm', 'hr', 'pine', 'melon'].sort(() => r() - 0.5).slice(0, 2);
+  const order = ['hi', deck[0], guests[0], deck[1], deck[2], guests[1], deck[3], deck[4], deck[5]];
+  G.elv = { t: 0, phase: 'intro', emb: 18, order, qi: 0, q: null, qT: 0, gap: 120, people: ['boss'], bub: [], raised: 0, raiseNext: false, sil: 0, picks: 0, shake: 0, flash: 0, dark: 0, angry: 0, floor: 1, door: 1, doorT: 0, res: null, r, pops: [], stop: null };
+  G.state = 'elevator'; G.stateT = 0; playSong('lift');
+}
+function elvSay(e, who, s, t = 150) { e.bub = e.bub.filter(b => b.who !== who); e.bub.push({ who, s, t }); }
+function elvAsk(e) {
+  let q;
+  if (e.raiseNext) { e.raiseNext = false; q = ELV_RAISE[Math.min(e.raised, ELV_RAISE.length - 1)]; e.raised++; playSong(null); SFX.event(); }
+  else { const id = e.order[e.qi++]; if (!id) { e.gap = 99999; return; } q = ELV_Q[id];
+    if (q.enter) { e.stop = { who: q.enter, t: 0 }; e.door = 0; SFX.ding(); } }
+  const ch = q.ch.slice().sort(() => e.r() - 0.5);
+  e.q = Object.assign({}, q, { ch, T: q.enter ? 330 : 270 }); e.qT = 0;
+  if (q.fx === 'dark') { e.dark = 1; tone(110, 0.3, 'square', 0.06, 60); }
+  if (!q.enter) elvSay(e, q.line.startsWith('老闆') ? 'boss' : 'narr', q.line, 300);
+}
+function elvPick(i) {
+  const e = G.elv; if (!e || e.phase !== 'ride' || !e.q || e.qT < 10) return;
+  const q = e.q, c = i == null ? null : q.ch[i];
+  const [d, reply, flag] = c ? [c[1], c[2], c[3]] : [q.sil[0], q.sil[1], null];
+  e.emb = clamp(e.emb + d, 0, 100); e.picks++; if (!c) { e.sil++; for (let k = 0; k < 4; k++) tone(4300, 0.04, 'sine', 0.025, 0, k * 0.12 + (k > 1 ? 0.2 : 0)); }   // 蟋蟀聲
+  if (c) elvSay(e, 'me', c[0], 110);
+  elvSay(e, reply.startsWith('老闆') ? 'boss' : reply.startsWith('（') || reply.startsWith('…') ? 'narr' : (e.people[e.people.length - 1] || 'narr'), reply, STORY_MIN);
+  e.pops.push({ s: d > 0 ? `尷尬 +${d}` : d < 0 ? `尷尬 ${d} 😌` : '±0', c: d > 0 ? '#ff5252' : '#69f0ae', t: 0 });
+  if (d >= 15) { e.shake = 10; e.flash = 0.4; SFX.nope(); buzz(60); } else if (d < 0) SFX.coin(); else SFX.bump();
+  if (flag === 'angry') e.angry = 160;
+  if (flag === 'raise') e.raiseNext = true;
+  if (ELV_RAISE.some(r => r.line === q.line)) e.musicT = 100;      // 調薪話題結束：音樂慢慢回來
+  if (q.enter) e.leaveT = 420;
+  e.q = null; e.gap = 170 + Math.floor(e.r() * 30);   // 回應看完再出下一題
+}
+function updateElevator() {
+  const e = G.elv; if (!e) return; e.t++;
+  if (e.shake > 0) e.shake *= 0.85; if (e.flash > 0) e.flash -= 0.04; if (e.angry > 0) e.angry--; if (e.dark > 0 && !e.q) e.dark = Math.max(0, e.dark - 0.02);
+  for (const b of e.bub) b.t--; e.bub = e.bub.filter(b => b.t > 0); for (const p of e.pops) p.t++; e.pops = e.pops.filter(p => p.t < 70);
+  if (e.phase === 'intro') { e.door = Math.max(0, 1 - e.t / 60); if (e.t === 1) elvSay(e, 'narr', '叮——電梯門打開……老闆就站在裡面。', 160); if (e.t > 90) { e.phase = 'ride'; e.t = 0; e.gap = 30; } return; }
+  if (e.phase !== 'ride') { if (e.phase === 'win') e.door = Math.min(1, e.door + 0.03); return; }
+  e.floor = 1 + Math.floor(e.t / ELV_DUR * 16);
+  e.emb = Math.min(100, e.emb + 0.012 + 0.006 * (e.people.length - 1));     // 安靜的時候也會慢慢變尷尬
+  if (e.stop) { e.stop.t++; const s = e.stop;
+    e.door = s.t < 30 ? s.t / 30 : s.t < 70 ? 1 : Math.max(0, 1 - (s.t - 70) / 30);
+    if (s.t === 40) { e.people.push(s.who); elvSay(e, s.who, e.q ? e.q.line.replace(/^.*?：/, '') : '', 200); }
+    if (s.t > 100) e.stop = null; }
+  if (e.musicT > 0 && --e.musicT === 0) playSong('lift');
+  if (e.leaveT > 0 && --e.leaveT === 0 && e.people.length > 1) { const w = e.people.pop(); elvSay(e, 'narr', `（${ELV_WHO[w].name} 在 ${e.floor + 1}F 下電梯了）`, 120); }
+  if (e.q) { e.qT++; if (e.qT >= e.q.T) elvPick(null); }
+  else if (--e.gap <= 0 && e.t < ELV_DUR - 200) elvAsk(e);
+  if (e.emb >= 100) { e.phase = 'lose'; e.t = 0; e.q = null; playSong(null); SFX.die(); elvDone(false); return; }
+  if (e.t >= ELV_DUR) { e.phase = 'win'; e.t = 0; e.q = null; SFX.ding(); playSong('lift'); elvDone(true); }
+}
+function elvGrade(e) {
+  if (e.sil >= e.picks && e.picks >= 4) return ['🤫 沉默是金', '你一句話都沒說，卻贏得了一切。'];
+  return e.emb <= 25 ? ['🌟 社交天才', '老闆：「下次一起搭電梯啊！」（你：不要）'] : e.emb <= 50 ? ['🙂 電梯生存者', '老闆：「嗯。」（這已經是最高評價）'] : e.emb <= 75 ? ['😅 尷尬但體面', '你走出電梯的時候，同手同腳。'] : ['😵 靈魂半出竅', '你決定以後都走樓梯。'];
+}
+function elvDone(win) {
+  const e = G.elv; META.elv = META.elv || {}; META.elv.plays = (META.elv.plays || 0) + 1;
+  let gain = 0; if (win) { const d = todayStr(); if (META.elv.day !== d) { META.elv.day = d; gain = 15 + (e.emb <= 25 ? 10 : 0); META.bank += gain; } META.elv.best = Math.min(META.elv.best == null ? 100 : META.elv.best, Math.round(e.emb)); }
+  saveMeta(); e.res = { win, gain, grade: win ? elvGrade(e) : ['👻 尷尬到靈魂出竅', '你的靈魂先下電梯了。'] };
+}
+function elevatorKey(e) {
+  const v = G.elv; if (!v) return;
+  if (e.code === 'Escape') { G.elv = null; goTitle(); return; }
+  if (v.phase === 'ride' && /^Digit[1-4]$/.test(e.code)) { const i = +e.code.slice(5) - 1; elvPick(i < 3 ? i : null); return; }
+  if ((v.phase === 'win' || v.phase === 'lose') && v.t > 60 && ['Enter', 'Space'].includes(e.code)) openElevator();
+}
+// ---- 畫面 ----
+function drawElvPerson(who, x, y, s, e) {
+  if (who === 'boss') { drawDurian(x, y - 70 * s, 0.62 * s, e.angry > 0 || (e.q && ELV_RAISE.some(r => r.line === e.q.line)) ? 'angry' : 'normal'); return; }
+  const W0 = ELV_WHO[who]; ctx.fillStyle = 'rgba(0,0,0,.2)'; ell(x, y + 2, 34 * s, 8 * s); ctx.fill();
+  ctx.fillStyle = W0.col; rr(x - 26 * s, y - 70 * s, 52 * s, 70 * s, 22 * s); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.fillRect(x - 4 * s, y - 64 * s, 8 * s, 30 * s); ctx.fillStyle = '#263238'; ctx.beginPath(); ctx.moveTo(x - 4 * s, y - 60 * s); ctx.lineTo(x + 4 * s, y - 60 * s); ctx.lineTo(x, y - 36 * s); ctx.fill();
+  txt(W0.emoji, x, y - 76 * s, 46 * s, '#000', 'center');
+  ctx.fillStyle = '#eceff1'; rr(x - 10 * s, y - 50 * s, 20 * s, 12 * s, 2); ctx.fill();
+}
+function drawElevator() {
+  const e = G.elv; if (!e) return;
+  ctx.save(); if (e.shake > 0.3) ctx.translate(rand(-e.shake, e.shake), rand(-e.shake, e.shake) * 0.6);
+  // 牆＋地板＋天花板燈
+  const wg = ctx.createLinearGradient(0, 0, W, 0); wg.addColorStop(0, '#78909c'); wg.addColorStop(0.5, '#cfd8dc'); wg.addColorStop(1, '#78909c'); ctx.fillStyle = wg; ctx.fillRect(-20, -20, W + 40, H + 40);
+  ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1; for (let x = 0; x < W; x += 6) { ctx.beginPath(); ctx.moveTo(x, 60); ctx.lineTo(x + 3, 384); ctx.stroke(); }
+  ctx.fillStyle = '#eceff1'; ctx.fillRect(0, 0, W, 54); ctx.fillStyle = `rgba(255,253,231,${0.9 - e.dark * 0.6 + (e.dark && FC % 9 < 2 ? 0.3 : 0)})`; rr(W / 2 - 220, 12, 440, 26, 8); ctx.fill();
+  const fg = ctx.createLinearGradient(0, 384, 0, H); fg.addColorStop(0, '#455a64'); fg.addColorStop(1, '#263238'); ctx.fillStyle = fg; ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(90, 384); ctx.lineTo(W - 90, 384); ctx.lineTo(W, H); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.08)'; for (let i = 1; i < 6; i++) { ctx.beginPath(); ctx.moveTo(90 + i * (W - 180) / 6, 384); ctx.lineTo(i * W / 6, H); ctx.stroke(); }
+  // 門（後方中間）＋樓層顯示
+  const dx = W / 2, dw = 280, dt = 92, db = 384, open = e.door * dw / 2;
+  ctx.fillStyle = '#37474f'; ctx.fillRect(dx - dw / 2 - 12, dt - 12, dw + 24, db - dt + 12);
+  ctx.fillStyle = '#fff8e1'; ctx.fillRect(dx - dw / 2, dt, dw, db - dt);
+  if (e.door > 0) { ctx.fillStyle = '#d7ccc8'; ctx.fillRect(dx - dw / 2, db - 60, dw, 60); txt(`${e.floor}F`, dx, dt + 70, 40, '#8d6e63', 'center'); }
+  const dg = ctx.createLinearGradient(dx - dw / 2, 0, dx, 0); dg.addColorStop(0, '#90a4ae'); dg.addColorStop(1, '#b0bec5'); ctx.fillStyle = dg;
+  ctx.fillRect(dx - dw / 2, dt, dw / 2 - open, db - dt); ctx.fillRect(dx + open, dt, dw / 2 - open, db - dt);
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(dx - open, dt); ctx.lineTo(dx - open, db); ctx.moveTo(dx + open, dt); ctx.lineTo(dx + open, db); ctx.stroke();
+  ctx.fillStyle = '#212121'; rr(dx - 70, 58, 140, 26, 5); ctx.fill(); txt(`${e.stop || e.phase === 'win' ? '■' : '▲'} ${e.floor}F`, dx, 78, 18, '#ff5252', 'center');
+  ctx.fillStyle = '#b0bec5'; rr(W - 150, 170, 46, 150, 8); ctx.fill(); for (let i = 0; i < 8; i++) { const lit = 16 - i * 2 === e.floor || 16 - i * 2 - 1 === e.floor; ctx.fillStyle = lit ? '#ffca28' : '#eceff1'; circ(W - 127, 186 + i * 17, 6); ctx.fill(); }
+  ctx.fillStyle = '#90a4ae'; ctx.fillRect(40, 296, W - 80, 7);                                                     // 扶手
+  // 人
+  const others = e.people.filter(p => p !== 'boss');
+  others.forEach((p, i) => drawElvPerson(p, W / 2 - 60 + i * 120, 386, 0.95, e));
+  drawElvPerson('boss', 690, 400, 1.15, e);
+  { const sw = e.emb / 100; drawHero(270, 390, 2.6, 1, 0, false, { happy: e.emb < 40 });
+    for (let i = 0; i < Math.floor(sw * 6); i++) { const a = (FC * 0.05 + i * 1.3) % 1; ctx.fillStyle = `rgba(129,212,250,${1 - a})`; ell(232 + (i * 37) % 80, 290 + a * 40, 4, 7); ctx.fill(); }
+    if (e.q && e.q.T - e.qT < 60 && FC % 20 < 10) txt('💦', 300, 280, 22, '#000', 'center');
+    if (e.phase === 'lose') { const k = Math.min(1, e.t / 80); ctx.globalAlpha = 0.7; txt('👻', 270, 300 - k * 200, 60, '#000', 'center'); ctx.globalAlpha = 1; } }
+  if (e.dark > 0) { ctx.fillStyle = `rgba(0,0,0,${e.dark * 0.55})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
+  ctx.restore();
+  // 對話泡泡
+  const pos = { me: [270, 262], boss: [690, 248], narr: [W / 2, 140] }; others.forEach((p, i) => pos[p] = [W / 2 - 60 + i * 120, 252]);
+  e.bub.forEach(b => { const [x, y] = pos[b.who] || pos.narr; if (!b.s) return; ctx.font = `bold 15px ${FONT}`; const w = Math.min(420, ctx.measureText(b.s).width + 28), bx = clamp(x - w / 2, 10, W - w - 10), by = b.who === 'narr' ? y : y - 30;
+    ctx.fillStyle = b.who === 'narr' ? 'rgba(33,33,33,.85)' : '#fff'; rr(bx, by - 22, w, 34, 12); ctx.fill(); if (b.who !== 'narr') { ctx.beginPath(); ctx.moveTo(clamp(x, bx + 14, bx + w - 14) - 8, by + 12); ctx.lineTo(clamp(x, bx + 14, bx + w - 14) + 8, by + 12); ctx.lineTo(clamp(x, bx + 14, bx + w - 14), by + 24); ctx.fill(); }
+    txtFit(b.s, bx + w / 2, by + 1, w - 20, 15, b.who === 'narr' ? '#fff' : '#3e2723', 'center'); });
+  // 尷尬值
+  const m = e.emb / 100, mc = m < 0.4 ? '#66bb6a' : m < 0.7 ? '#ffca28' : '#ef5350';
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; rr(18, 100, 44, 300, 12); ctx.fill(); ctx.fillStyle = mc; rr(24, 106 + 288 * (1 - m), 32, 288 * m, 8); ctx.fill();
+  txt('😱', 40, 96, 22, '#000', 'center'); txt('尷尬值', 40, 422, 13, '#fff', 'center', { stroke: '#263238', sw: 3 }); txt(Math.round(e.emb), 40, 440, 14, mc, 'center', { stroke: '#263238', sw: 3 });
+  e.pops.forEach(p => txt(p.s, 112, 250 - p.t * 0.8, 20, p.c, 'left', { stroke: '#263238', sw: 4 }));
+  // 時間
+  const left = Math.max(0, Math.ceil((ELV_DUR - (e.phase === 'ride' ? e.t : 0)) / 60));
+  ctx.fillStyle = 'rgba(0,0,0,.5)'; rr(W - 150, 60, 130, 34, 8); ctx.fill(); txt(`⏱ 0:${String(e.phase === 'ride' ? left : e.phase === 'intro' ? 30 : 0).padStart(2, '0')}`, W - 85, 84, 18, '#fff', 'center');
+  txt('🔼 電梯尷尬 30 秒', 20, 36, 18, '#263238');
+  // 選項
+  if (e.q && e.phase === 'ride') {
+    ctx.fillStyle = 'rgba(20,24,30,.88)'; rr(14, H - 150, W - 28, 140, 14); ctx.fill();
+    ctx.fillStyle = '#546e7a'; rr(26, H - 142, W - 52, 6, 3); ctx.fill(); ctx.fillStyle = e.q.T - e.qT < 70 ? '#ef5350' : '#ffca28'; rr(26, H - 142, (W - 52) * (1 - e.qT / e.q.T), 6, 3); ctx.fill();
+    txtFit(e.q.line, W / 2, H - 114, W - 80, 15, '#fff', 'center');
+    const opts = [...e.q.ch.map(c => c[0]), '…（假裝滑手機）'];
+    opts.forEach((o, i) => { const x = 26 + (i % 2) * ((W - 52) / 2 + 4), y = H - 96 + Math.floor(i / 2) * 42, w = (W - 52) / 2 - 4;
+      drawBtn(x, y, w, 36, `${isTouch ? '' : (i + 1) + '. '}${o}`, () => elvPick(i < 3 ? i : null), i === 3 ? '#455a64' : '#5d4037'); });
+  }
+  if (e.flash > 0) { ctx.fillStyle = `rgba(255,82,82,${e.flash * 0.4})`; ctx.fillRect(0, 0, W, H); }
+  if (e.res && e.t > 40) {
+    const r = e.res; ctx.fillStyle = 'rgba(10,10,20,.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fffdf5'; rr(W / 2 - 280, 110, 560, 300, 18); ctx.fill(); ctx.strokeStyle = r.win ? '#2e7d32' : '#6a1b9a'; ctx.lineWidth = 5; ctx.stroke();
+    txt(r.win ? '叮！17F 到了 🔔' : '電梯還沒到…', W / 2, 160, 26, r.win ? '#2e7d32' : '#6a1b9a', 'center');
+    txt(r.grade[0], W / 2, 210, 30, '#e65100', 'center'); txtFit(r.grade[1], W / 2, 250, 500, 16, '#4e342e', 'center');
+    txt(`最後尷尬值：${Math.round(e.emb)}　沉默次數：${e.sil}`, W / 2, 284, 14, '#8d6e63', 'center', { weight: 'normal' });
+    txt(r.win ? (r.gain ? `🍇 葡萄 +${r.gain}（每天第一次過關）` : '（今天的葡萄已經領過了）') : '提示：有時候什麼都不說，反而最安全', W / 2, 314, 14, '#2e7d32', 'center');
+    if (!G.capture) { drawBtn(W / 2 - 220, 340, 200, 44, '🔁 再搭一次', openElevator, '#2e7d32'); drawBtn(W / 2 + 20, 340, 200, 44, '◀ 回標題', () => { G.elv = null; goTitle(); }, '#455a64'); }
+  }
+  if (e.phase === 'intro') txt(isTouch ? '' : '數字鍵 1～4 選話題', W / 2, H - 20, 13, '#37474f', 'center', { weight: 'normal' });
+}
+
+// ---------- 標題：分類選單（小遊戲／收藏冊／選關） ----------
+function openHub(kind) { G.state = 'hub'; G.stateT = 0; G.hub = kind; }
+function hubItems(kind) {
+  const openCards = () => { G.state = 'cards'; G.stateT = 0; }, openSkins = () => { G.state = 'skins'; G.stateT = 0; G.skinSel = 0; G.skinMsg = ''; };
+  if (kind === 'games') {
+    return { title: '🎮 小遊戲', sub: '上班累了？來點不用動腦（或很動腦）的', items: [
+      ['⛳', '週末高爾夫', '陪老闆打 6 洞，記得讓桿', '最後一洞：人工湖打水漂', () => openGolf(), '#2e7d32'],
+      ['🔼', '電梯尷尬 30 秒', '跟老闆困在電梯裡，選話題撐過去', META.elv && META.elv.best != null ? `最低尷尬值 ${META.elv.best}` : '還沒搭過', openElevator, '#546e7a'],
+      ['🫧', '泡泡紙', '壓力大的時候，捏就對了', '無限量供應', () => openBubble('title'), '#0277bd']] };
+  }
+  if (kind === 'collect') return { title: '🎒 收藏冊', sub: '你在這間公司留下的痕跡', items: [
+    ['🏅', '成就', '各種奇怪的里程碑', `${achGot.size} / ${ACH.length}`, () => openAch('title'), '#6a1b9a'],
+    ['📇', '名片冊', '交換過名片的同事（和怪物）', `${META.cards.length} / ${CARDS.length}`, openCards, '#455a64'],
+    ['👕', '造型', '用葡萄換新衣服', `${META.skins.length} / ${SKINS.length}`, openSkins, '#ad1457']] };
+  const sv = readSave(), dn = i => LEVELS[i].name.split('｜')[1] || LEVELS[i].name, items = [];
+  for (let i = 0; i <= MAIN_LAST; i++) { const ok = !!(sv && sv.slots[i]); items.push([ok ? (sv.last === i ? '▶' : '📁') : '🔒', `第 ${i + 1} 天`, dn(i), ok ? (sv.last === i ? '上次玩到這裡' : '從這天開始') : '還沒解鎖', ok ? () => loadRun(i) : () => SFX.nope(), ok ? '#5e35b1' : null]); }
+  items.push(['🆕', '從頭開始', '從週一早晨重新上班', '存檔會保留', () => startGame(), '#6d4c41']);
+  return { title: '📖 故事模式：選擇日期', sub: '過過的日子都可以重玩', items };
+}
+function drawHub() {
+  drawTitleBG();
+  const H0 = hubItems(G.hub), n = H0.items.length, cols = n > 3 ? 3 : n, rows = Math.ceil(n / cols), tw = 270, th = rows > 1 ? 112 : 160, gap = 16;
+  const pw = cols * tw + (cols - 1) * gap + 48, ph = rows * th + (rows - 1) * gap + 172, px = W / 2 - pw / 2, py = Math.max(20, H / 2 - ph / 2 - 20);
+  ctx.fillStyle = 'rgba(21,13,38,.88)'; rr(px, py, pw, ph, 22); ctx.fill(); ctx.strokeStyle = '#8e44c4'; ctx.lineWidth = 4; ctx.stroke();
+  txt(H0.title, W / 2, py + 48, 28, '#ffd54f', 'center', { stroke: '#562078', sw: 6 });
+  txt(H0.sub, W / 2, py + 76, 14, '#e1bee7', 'center', { weight: 'normal' });
+  H0.items.forEach(([ic, name, desc, stat, fn, col], i) => {
+    const r = Math.floor(i / cols), c = i % cols, inRow = Math.min(cols, n - r * cols), x0 = W / 2 - (inRow * tw + (inRow - 1) * gap) / 2, x = x0 + c * (tw + gap), y = py + 96 + r * (th + gap);
+    const hov = !col ? 0 : Math.sin(FC * 0.08 + i) * 1.5;
+    ctx.fillStyle = col || 'rgba(255,255,255,.08)'; rr(x, y - hov, tw, th, 14); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; rr(x, y - hov, tw, th / 2, 14); ctx.fill();
+    const big = th > 130;
+    txt(ic, x + (big ? tw / 2 : 40), y - hov + (big ? 52 : th / 2 + 14), big ? 40 : 34, '#fff', 'center');
+    const tx = big ? x + tw / 2 : x + 74, al = big ? 'center' : 'left', ty = big ? y - hov + 92 : y - hov + 34;
+    txt(name, tx, ty, 19, col ? '#fff' : 'rgba(255,255,255,.45)', al);
+    txtFit(desc, tx, ty + 22, big ? tw - 24 : tw - 86, 12, col ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.35)', al, { weight: 'normal' });
+    txtFit(stat, tx, ty + 44, big ? tw - 24 : tw - 86, 13, col ? '#ffe082' : 'rgba(255,255,255,.35)', al);
+    if (!G.capture) G.ui.push({ x, y, w: tw, h: th, fn });
+  });
+  drawBtn(W / 2 - 80, py + ph - 52, 160, 38, '◀ 回標題', goTitle, '#455a64');
+}
+function hubKey(e) {
+  if (e.code === 'Escape' || e.code === 'Backspace') { goTitle(); return; }
+  const m = /^Digit([1-9])$/.exec(e.code); if (m) { const it = hubItems(G.hub).items[+m[1] - 1]; if (it) it[4](); }
+}
+
+// ---------- 🦆 鴨子救援 ----------
+function golfDuckLucky(b) { const r = Math.sin(b.x * 3.731 + b.vx * 17.17 + b.vy * 5.3) * 43758.5453; return (r - Math.floor(r)) < 0.25; }
+function golfDuckStart(g, H0, b) {
+  const [xl, xr, wy] = golfWaterX(H0), cands = [[xl - 16, 'shore'], [xr + 16, 'shore']];
+  for (const [i0, i1] of (H0.islands || [])) cands.push([i0 + 14, 'island'], [i1 - 14, 'island']);
+  cands.sort((p, q) => Math.abs(p[0] - b.x) - Math.abs(q[0] - b.x));
+  const tx = cands[0][0], sh = g.shots && g.shots[g.shots.length - 1];
+  if (sh) { sh.ev = 'rest'; sh.duck = true; sh.end = tx; sh.endDist = Math.abs(tx - H0.hole); sh.gain = sh.from - sh.endDist; }
+  g.duck = { x: b.x, y: wy, sx: b.x, tx, t: 0, dur: clamp(Math.abs(tx - b.x) / 4, 70, 160), dir: Math.sign(tx - b.x) || 1 };
+  g.ball = { x: b.x, y: wy + 6, vx: 0, vy: 0, rest: true, hidden: true }; g.phase = 'duck'; g.t = 0; g.trp = [];
+  SFX.splash();
+}
+function golfDuckStep(g, H0) {
+  const d = g.duck; d.t++;
+  if (d.t === 14) { golfPop(g, '嘎！', d.x, d.y - 40, { size: 30, col: '#fff59d', burst: '#ff9800', life: 60 }); tone(700, 0.09, 'sawtooth', 0.08, 460); tone(640, 0.13, 'sawtooth', 0.08, 380, 0.11); }
+  if (d.t > 30) { const k = Math.min(1, (d.t - 30) / d.dur), e = k * k * (3 - 2 * k); d.x = d.sx + (d.tx - d.sx) * e; if (d.t % 18 === 0) tone(680, 0.06, 'sawtooth', 0.04, 500); }
+  if (d.t > 30 + d.dur + 20) golfDuckEnd(g, H0);
+}
+function golfDuckEnd(g, H0) {
+  const d = g.duck; if (!d) return;
+  g.ball = { x: d.tx, y: golfGround(H0, d.tx) - 5, vx: 0, vy: 0, rest: true }; g.last = { x: g.ball.x, y: g.ball.y };
+  g.duck = null; g.phase = 'aim'; g.t = 0;
+  golfPop(g, '嘎！（這顆算你的）', W / 2, 160, { size: 26, col: '#fff59d', screen: true, life: 110 });
+  golfPop(g, pick(['🦆 鴨子：「不用謝，記得餵我麵包」', '（不用罰桿！鴨子是好同事）', '桿弟：「這隻鴨子比我還專業」']), W / 2, 200, { size: 15, screen: true, life: 110 });
+  golfMaybeSettle(g, g.ball.x, g.ball.y);
+}
+function drawGolfDuck(g, H0) {
+  const d = g.duck; if (!d) return;
+  const rise = Math.min(1, d.t / 14), bob = Math.sin(FC * 0.25) * 1.5, x = d.x, y = d.y - 6 * rise + bob + (1 - rise) * 14, f = d.t > 30 ? d.dir : 1;
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 1.5; for (let i = 1; i <= 3; i++) { const r = ((FC * 0.6 + i * 9) % 30); ctx.globalAlpha = 1 - r / 30; ell(x - f * i * 10, d.y + 2, 6 + r * 0.6, 2 + r * 0.15); ctx.stroke(); } ctx.globalAlpha = 1;
+  ctx.save(); ctx.translate(x, y); ctx.scale(f, 1);
+  ctx.fillStyle = '#8d6e63'; ell(0, 0, 16, 9); ctx.fill(); ctx.fillStyle = '#d7ccc8'; ell(-4, -2, 9, 5); ctx.fill();
+  ctx.fillStyle = '#5d4037'; ctx.beginPath(); ctx.moveTo(-14, -2); ctx.lineTo(-22, -7); ctx.lineTo(-15, 2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.fillRect(7, -9, 6, 3);
+  ctx.fillStyle = '#2e7d32'; circ(11, -15, 7.5); ctx.fill();
+  ctx.fillStyle = '#ff9800'; ctx.beginPath(); ctx.moveTo(16, -16); ctx.lineTo(25, -13); ctx.lineTo(16, -11); ctx.fill();
+  ctx.fillStyle = '#111'; circ(13, -17, 1.4); ctx.fill();
+  if (d.t > 10) { ctx.fillStyle = '#fff'; circ(26, -12, 4); ctx.fill(); ctx.strokeStyle = '#bbb'; ctx.lineWidth = 0.8; ctx.stroke(); }   // 叼著球
+  ctx.restore();
+}
+// ---------- 📸 名場面慢動作特寫（假髮、腳桿、揮空） ----------
+const CINE_CAP = {
+  wig:   ['📸 名場面：颱風 vs 假髮', '慢動作重播：帽子、頭髮、尊嚴，依序起飛'],
+  bald:  ['📸 名場面：禿頭特寫', '（反光中，請勿直視）'],
+  kick:  ['📸 名場面：老闆的「腳」桿', '慢動作確認：這不是一桿，這是「調整」'],
+  whiff: ['📸 名場面：空氣揮桿', '球：「我還在這裡。」'],
+  phone: ['📸 名場面：球場電話會議', '「我在打……開會。」'],
+  angry: ['📸 名場面：誰在講話？', '（全場只有鳥在叫）'],
+  zen:   ['📸 名場面：揮桿前的冥想', '（三分鐘過去了）'],
+};
+function golfCineStart(g, kind, opt = {}) {
+  g.cine = { kind, t: 0, dur: opt.dur || 90, slow: opt.slow || 3, snap: opt.snap != null ? opt.snap : 30, frz: 0, shot: false, n: (g.cineN = (g.cineN || 0) + 1) };
+  tone(1200, 0.05, 'square', 0.04); noise(0.12, 0.05, 0.05);
+}
+function golfCineStep(g) {                                        // 回傳 true＝這一格不要推進老闆（慢動作／定格）
+  const c = g.cine; if (!c) return false;
+  if (c.frz > 0) { c.frz--; return true; }
+  c.t++;
+  if (!c.shot && c.t >= c.snap) { c.shot = true; c.frz = 28; noise(0.08, 0.2); tone(3000, 0.05, 'square', 0.05); g.fx.flash = 0.9; return true; }   // 咔嚓！定格拍照
+  const st = { whiff: 'whiff', phone: 'whiff', angry: 'whiff', zen: 'whiff', kick: 'kick' }[c.kind];
+  if (st ? (g.bp && g.bp.state !== st) : c.t > c.dur) { g.cine = null; return false; }   // 老闆的動作做完才結束特寫
+  return c.t % c.slow !== 0;
+}
+function golfCineTarget(g, H0) {
+  const c = g.cine, B = g.bp; if (!c || !B) return null;
+  const bd = B.ball.x > H0.hole ? -1 : 1;
+  if (c.kind === 'kick') return { x: B.ball.x - 10 * bd, y: B.ball.y - 18, z: 2.6 };
+  const dx = (B.state === 'kick' ? B.kick.x0 : B.ball.x) - 30 * bd; return { x: dx + 6 * bd, y: golfGround(H0, dx) - 36, z: c.kind === 'bald' ? 3.2 : 2.7 };
+}
+function drawGolfCine(g) {
+  const c = g.cine; if (!c) return;
+  const k = Math.min(1, c.t / 10), bar = 52 * k;
+  ctx.fillStyle = 'rgba(255,214,150,.08)'; ctx.fillRect(0, 0, W, H);                                   // 懷舊色調
+  const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.62); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.45)'); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  if (k >= 1) {
+    if (FC % 40 < 26) { ctx.fillStyle = '#e53935'; circ(26, 26, 6); ctx.fill(); } txt('REC', 38, 31, 14, '#fff', 'left');
+    txt(c.frz > 0 ? '⏸ 定格' : '🐢 慢動作 ×0.3', W - 130, 31, 14, '#fff', 'right');
+    const cap = CINE_CAP[c.kind] || ['📸 名場面', '']; txt(cap[0] + `  #${c.n}`, W / 2, H - 30, 18, '#ffe082', 'center'); txt(cap[1], W / 2, H - 10, 12, '#fff', 'center', { weight: 'normal' });
+  }
+  if (c.frz > 0) {                                                                                       // 拍立得定格框
+    const m = 22 + (28 - c.frz) * 0.4; ctx.strokeStyle = '#fffdf5'; ctx.lineWidth = 14; ctx.strokeRect(m, bar + m * 0.4, W - m * 2, H - bar * 2 - m * 0.8);
+    ctx.save(); ctx.translate(W - 110, bar + 46); ctx.rotate(0.12); ctx.fillStyle = '#e53935'; rr(-62, -16, 124, 32, 6); ctx.fill(); txt('📸 咔嚓！', 0, 6, 16, '#fff', 'center'); ctx.restore();
+  }
 }
 
 // ---------- 每日關卡流程 ----------
