@@ -453,6 +453,7 @@ window.addEventListener('keydown', e => {
   if (G.state === 'mengpo') { mengpoKey(e); return; }
   if (G.state === 'hub') { if (!e.repeat) hubKey(e); if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'elevator') { if (['Space', 'Enter'].includes(e.code) || /^Digit/.test(e.code)) e.preventDefault(); if (!e.repeat) elevatorKey(e); if (e.code === 'KeyM') toggleMute(); return; }
+  if (G.state === 'secdex') { if (!e.repeat) secKey(e); if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'stare') { if (['Space', 'Enter', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault(); stareKey(e, true); return; }
   if (G.state === 'phish') { if (['Space', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault(); phishKey(e); return; }
   if (G.state === 'golf') { if (e.code === 'Escape') golfExit(); else if (G.golf && G.golf.td && ['ArrowLeft', 'KeyA', 'KeyQ', 'ArrowRight', 'KeyD', 'KeyE'].includes(e.code)) { e.preventDefault(); golfTdTurn(['ArrowLeft', 'KeyA', 'KeyQ'].includes(e.code) ? (e.shiftKey ? -2 : -0.5) : (e.shiftKey ? 2 : 0.5)); } else if (/^Digit[1-6]$/.test(e.code)) golfSpinSel(+e.code.slice(5) - 1); else if (['KeyQ', 'ArrowLeft'].includes(e.code)) { e.preventDefault(); golfSpinCycle(-1); } else if (['KeyE', 'ArrowRight'].includes(e.code)) { e.preventDefault(); golfSpinCycle(1); } else if (['Space', 'Enter', 'ArrowUp', 'KeyZ', 'KeyK', 'KeyW'].includes(e.code)) { e.preventDefault(); if (!e.repeat) golfPress(); } else if (e.code === 'KeyM') toggleMute(); return; }
@@ -525,7 +526,7 @@ cvs.addEventListener('pointerdown', e => {
   if (G.state === 'golf') { golfPress(); return; }
   if (G.state === 'stare') { if (G.st && G.st.phase === 'play') { stHold(true); ptrDown = true; } return; }
   if (G.state === 'phish') { phPointer('down', p); ptrDown = true; try { cvs.setPointerCapture(e.pointerId); } catch (_) {} return; }
-  if (G.state === 'shop' || G.state === 'calendar' || G.state === 'cards' || G.state === 'skins' || G.state === 'mengpo' || G.state === 'elevator' || G.state === 'hub') return;
+  if (G.state === 'shop' || G.state === 'calendar' || G.state === 'cards' || G.state === 'skins' || G.state === 'mengpo' || G.state === 'elevator' || G.state === 'hub' || G.state === 'secdex') return;
   if (G.state === 'play' && G.bsod && !G.paused) { bsodPress(); return; }
   if (G.state !== 'play') confirmAct(); else if (G.paused) togglePause();
 });
@@ -641,6 +642,7 @@ const ACH = [
   ['quit', '📄', '真．下班', '集滿離職信，達成離職結局'],
   ['stare', '🕵️', '木頭人冠軍', '老闆轉頭就停：零警告撐到 18:00'],
   ['phish', '🎣', '資安守門員', '釣魚信件 15 封全部答對'],
+  ['secAll', '📚', '防詐小百科', '收集全部的防詐知識卡'],
 ];
 const ACH_KEY = 'grapeOfficeAch_v1';
 let achGot = new Set();
@@ -4738,7 +4740,7 @@ function drawTitleMenu() {
 
 function render() {
   if (isTouch && btnFlip) btnFlip.classList.toggle('ready', G.state === 'play' && G.rage >= 100);
-  if (isTouch && G.menuCls !== G.state) { G.menuCls = G.state; document.body.classList.toggle('menu', ['title', 'calendar', 'cards', 'skins', 'ach', 'shop', 'dayclear', 'review', 'credits', 'bubble', 'mengpo', 'parade', 'golf', 'elevator', 'hub', 'stare', 'phish'].includes(G.state)); }
+  if (isTouch && G.menuCls !== G.state) { G.menuCls = G.state; document.body.classList.toggle('menu', ['title', 'calendar', 'cards', 'skins', 'ach', 'shop', 'dayclear', 'review', 'credits', 'bubble', 'mengpo', 'parade', 'golf', 'elevator', 'hub', 'stare', 'phish', 'secdex'].includes(G.state)); }
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, W, H);
   G.ui = [];
@@ -4755,6 +4757,7 @@ function render() {
   if (G.state === 'hub') { drawHub(); drawAchBanner(); return; }
   if (G.state === 'elevator') { drawElevator(); drawAchBanner(); return; }
   if (G.state === 'stare') { drawStare(); drawAchBanner(); return; }
+  if (G.state === 'secdex') { drawSecDex(); drawAchBanner(); return; }
   if (G.state === 'phish') { drawPhish(); drawAchBanner(); return; }
   if (G.state === 'credits') { drawCredits(); drawAchBanner(); return; }
   if (G.state === 'ach') { drawAchPage(); drawAchBanner(); return; }
@@ -4797,10 +4800,11 @@ function render() {
   switch (G.state) {
     case 'intro':
       if (LV.daily) { drawCard(LV.name, ['📅 ' + LV.mission, `🎋 今日運勢【${G.fort.lv}】${G.fort.t}`, '　' + G.fort.d, '⏰ 18:00 前走到「下班打卡處」＝準時打卡'],
-        isTouch ? '點一下畫面開始上班' : '按 Enter / 點擊畫面開始上班', '#e65100'); break; }
+        isTouch ? '點一下畫面開始上班' : '按 Enter / 點擊畫面開始上班', '#e65100'); drawLaborTip('i' + LV.name); break; }
       drawCard(LV.name, ['任務：' + LV.mission, LV.hint,
         LV.deadline ? `⏰ ${fmtClock(LV.clock)} 上班，${fmtClock(LV.deadline)} 前到出口＝${G.levelIdx === MAIN_LAST ? '趕上末班捷運' : '準時下班'}` : '⏰ 這裡的時間不算在今天裡'],
         isTouch ? '點一下畫面開始上班' : '按 Enter / 點擊畫面開始上班');
+      drawLaborTip('i' + LV.name);
       break;
     case 'dead':
       if (G.stateT > DEATH_CARD_T()) drawCard(G.deathStyle === 'raisin' ? '🍇 → 葡萄乾' : G.deathStyle === 'juice' ? '🧃 → 葡萄汁' : '💀 陣亡',
@@ -4815,7 +4819,7 @@ function render() {
         overLine(d.ot, d.early),
         `🍇 葡萄 ${G.grapes}　🏆 分數 ${G.score}　精神獎金 +${G.clearBonus}`,
         G.levelDamage ? `💸 本關造成公司損失 ${fmtMoney(G.levelDamage)}` : '💸 本關公司財產完好無損（你是不是太乖了）', LV.comment],
-        '按 Enter / 點擊 → 逛福委會福利社 🛒', d.ot ? '#e65100' : '#2e7d32'); }
+        '按 Enter / 點擊 → 逛福委會福利社 🛒', d.ot ? '#e65100' : '#2e7d32'); drawLaborTip('c' + LV.name); }
       break;
     case 'over':
       drawCard('💀 年假用完了', ['HR 邀請你去會議室「聊聊」', '（會議室裡只準備了一盒面紙）', '🥣 孟婆：「年假都用完了？我這碗免費，喝了從今天早上重來吧。」'], '按 Enter 重新投履歷（從本關重來）', '#e53935');
@@ -7569,7 +7573,8 @@ function hubItems(kind) {
   if (kind === 'collect') return { title: '🎒 收藏冊', sub: '你在這間公司留下的痕跡', items: [
     ['🏅', '成就', '各種奇怪的里程碑', `${achGot.size} / ${ACH.length}`, () => openAch('title'), '#6a1b9a'],
     ['📇', '名片冊', '交換過名片的同事（和怪物）', `${META.cards.length} / ${CARDS.length}`, openCards, '#455a64'],
-    ['👕', '造型', '用葡萄換新衣服', `${META.skins.length} / ${SKINS.length}`, openSkins, '#ad1457']] };
+    ['👕', '造型', '用葡萄換新衣服', `${META.skins.length} / ${SKINS.length}`, openSkins, '#ad1457'],
+    ['🛡️', '防詐小百科', '釣魚信件學到的防詐招式', `${(META.sec || []).length} / ${SEC_CARDS.length}`, openSecDex, '#00695c']] };
   const sv = readSave(), dn = i => LEVELS[i].name.split('｜')[1] || LEVELS[i].name, items = [];
   for (let i = 0; i <= MAIN_LAST; i++) { const ok = !!(sv && sv.slots[i]); items.push([ok ? (sv.last === i ? '▶' : '📁') : '🔒', `第 ${i + 1} 天`, dn(i), ok ? (sv.last === i ? '上次玩到這裡' : '從這天開始') : '還沒解鎖', ok ? () => loadRun(i) : () => SFX.nope(), ok ? '#5e35b1' : null]); }
   items.push(['🆕', '從頭開始', '從週一早晨重新上班', '存檔會保留', () => startGame(), '#6d4c41']);
@@ -7927,121 +7932,204 @@ function drawMeet() {
 }
 
 // ---------- 🕵️ 老闆轉頭就停（上班版一二三木頭人） ----------
-const ST_DUR = 3600;                                              // 60 秒＝17:00 → 18:00
+const ST_MIN = 180;                                               // 遊戲裡 1 分鐘＝3 秒
+const ST_DUR = 59 * ST_MIN;                                       // 17:00 → 17:59（約 3 分鐘）
+const ST_FINAL = 900;                                             // 17:59 最後一擊：15 秒
 const ST_ACTS = [
   ['📱', '滑社群', ['按讚 👍', '笑死', '已分享']],
   ['🍪', '偷吃餅乾', ['喀滋', '喀滋喀滋', '（掉屑屑）']],
   ['📈', '看股票', ['漲停！', '綠油油…', '加碼！']],
   ['🛒', '網購', ['加入購物車', '已結帳 💸', '免運！']],
-  ['🎮', '手遊抽卡', ['SSR！！', '又是 R…', '十連抽']],
+  ['🎮', '手遊抽卡', ['十連抽…', '又是 R…', '保底快到了']],
   ['✈️', '看機票', ['峇里島…', '特價！', '要請幾天假？']],
   ['💬', '群組聊天', ['哈哈哈哈', '+1', '晚上吃啥']],
 ];
+const ST_GAME = 4;
 const ST_TELL = ['（咳咳）', '嗯……', '（椅子嘎吱一聲）', '（伸了個懶腰）', '（喝了一口茶）', '對了……'];
 const ST_CAUGHT = ['阿葡！你在看什麼？', '這是上班時間耶！', '你的 KPI 呢？', '滑得很開心嘛？', '來，進來我辦公室一下。'];
 const ST_GOOD = ['嗯，很認真。', '不錯不錯。', '（滿意地點頭）', '年輕人就是要這樣！', '這個月考績……再說。'];
+const ST_CAMEO = {
+  lemon:   { tx: 470, hi: '（檸檬晃過來了……）' },
+  coconut: { tx: 470, hi: '（椰子抱著筆電走過來……）' },
+  chili:   { tx: 600, hi: '（辣椒端著便當往茶水間走……）' },
+  banana:  { tx: 470, hi: '（香蕉一邊搧風一邊走過來……）' },
+};
 const stLerp = (a, b, k) => a + (b - a) * clamp(k, 0, 1);
 function openStare() {
   initAudio();
+  // 同事亂入的時間表：四個人各 3 次，平均分散、同一個人不連續
+  const kinds = ['lemon', 'coconut', 'chili', 'banana'], order = [];
+  for (let r = 0; r < 3; r++) { let k4 = kinds.slice().sort(() => Math.random() - 0.5); if (order.length && k4[0] === order[order.length - 1]) k4.push(k4.shift()); order.push(...k4); }
+  const gap = (ST_DUR - 900) / order.length, sched = order.map((kind, i) => ({ kind, t: Math.round(480 + i * gap + rand(-0.25, 0.25) * gap) }));
   G.st = { t: 0, phase: 'intro', time: 0, score: 0, warn: 0, hold: false, holdT: 0, act: 0, actT: 0, lastRel: -99,
     b: { mode: 'away', t: 0, dur: 170, rot: 0, ev: null, next: null, dbl: false },
-    say: null, peach: null, pops: [], shake: 0, flash: 0, near: 0, fakes: 0, praise: 0, counter: 0, res: null, stamp: null };
+    say: null, csay: null, peach: null, pops: [], shake: 0, flash: 0, near: 0, fakes: 0, praise: 0, counter: 0, res: null, stamp: null,
+    sched, cw: null, meet: 0, cold: 0, sneeze: null, ring: null, cheer: null, yell: 0, final: null, nextRing: Math.round(rand(900, 1500)), cheerArmed: true,
+    stats: { ring: 0, ringOk: 0, ssr: 0, ssrOk: 0, cameo: 0, mirror: 0 } };
   G.state = 'stare'; G.stateT = 0; playSong('sneak');
 }
 function stStart() { const s = G.st; if (!s || s.phase !== 'intro') return; s.phase = 'play'; s.t = 0; s.hold = false; SFX.check(); }
+function stCanHold(s) { return s.phase === 'play' && s.meet <= 0 && !(s.final && s.final.t < 150); }
 function stHold(on) {
   const s = G.st; if (!s) return;
-  if (s.phase !== 'play') { s.hold = false; return; }
+  if (!stCanHold(s)) { s.hold = false; return; }
   if (on && !s.hold) { s.hold = true; s.holdT = 0; tone(880, 0.05, 'sine', 0.05); }
   else if (!on && s.hold) { s.hold = false; s.lastRel = s.time; tone(520, 0.05, 'sine', 0.05); }
 }
-function stSay(s, who, text, t = 170) { s.say = { who, text, t }; }
+function stSay(s, who, text, t = 170) { if (who === 'boss') s.say = { who, text, t }; else s.csay = { who, text, t }; }
 function stPop(s, text, col = '#fff', x = 330, y = 300, big = false) { s.pops.push({ text, col, x, y, t: 0, big }); }
-function stWarnDur(s) { return Math.round(stLerp(60, 27, s.time / ST_DUR) * rand(0.85, 1.15)); }
+function stWarnDur(s) { return s.final ? Math.round(rand(24, 30)) : Math.round(stLerp(60, 31, s.time / ST_DUR) * rand(0.88, 1.12)); }
+function stCalm(s) { return ['away', 'phone'].includes(s.b.mode) && s.b.rot < 0.05; }
+function stForceTurn(s, dur, line) { const b = s.b; b.mode = 'turn'; b.t = 0; b.dur = dur; b.dbl = false; b.next = null; if (line) stSay(s, 'boss', line, 120); tone(240, 0.14, 'sawtooth', 0.06, 160); }
 function stBossNext(s) {                                           // 老闆背對你：決定下一招
   const b = s.b, d = s.time / ST_DUR, r = Math.random(); b.t = 0;
   if (b.next === 'double') { b.next = null; b.mode = 'warn'; b.ev = 'turn'; b.dur = 17; stSay(s, 'boss', '……（突然）'); return; }
-  if (d > 0.22 && !s.peach && r < 0.11) { s.peach = { x: W + 70, t: 0, phase: 'in' }; b.mode = 'away'; b.dur = 9999; stSay(s, 'peach', '（水蜜桃往老闆辦公室走過去……）', 160); return; }
+  if (s.final) { b.mode = 'warn'; b.dur = stWarnDur(s); b.ev = r < 0.25 ? 'fake' : 'turn'; stSay(s, 'boss', pick(['那個……', '還有……', '（翻資料）', '嗯……']), 60); tone(170, 0.18, 'sawtooth', 0.05, 120); return; }
+  if (d > 0.22 && !s.peach && !s.cw && r < 0.09) { s.peach = { x: W + 70, t: 0, phase: 'in' }; b.mode = 'away'; b.dur = 9999; stSay(s, 'peach', '（水蜜桃往老闆辦公室走過去……）', 160); return; }
   b.mode = 'warn'; b.dur = stWarnDur(s);
-  if (r < 0.31) b.ev = 'fake';
-  else if (r < 0.43 && d > 0.12) b.ev = 'half';
-  else if (r < 0.5) { b.mode = 'phone'; b.dur = 300; stSay(s, 'boss', '（接起電話）喂？對對對……', 220); return; }
+  if (r < 0.3) b.ev = 'fake';
+  else if (r < 0.41 && d > 0.12) b.ev = 'half';
+  else if (r < 0.48) { b.mode = 'phone'; b.dur = 300; stSay(s, 'boss', '（接起電話）喂？對對對……', 220); return; }
+  else if (r < 0.6 && d > 0.45) { b.mode = 'mirror'; b.dur = Math.round(rand(130, 170)); s.stats.mirror++; stSay(s, 'boss', '（盯著窗戶……）', 90); tone(1760, 0.08, 'sine', 0.05); return; }
   else b.ev = 'turn';
   if (Math.random() < 0.8) stSay(s, 'boss', pick(ST_TELL), 90);
   tone(170, 0.18, 'sawtooth', 0.05, 120);                         // 椅子嘎吱
 }
-function stCaught(s) {
+function stCaught(s, line) {
   const b = s.b; s.warn++; s.hold = false; s.holdT = 0; b.mode = 'caught'; b.t = 0; b.rot = 1;
-  s.flash = 1; s.shake = 14; SFX.boss(); buzz(120); stSay(s, 'boss', pick(ST_CAUGHT), 160);
-  s.score = Math.max(0, s.score - 150); s.stamp = { text: `⚠️ 警告 ${s.warn} / 3`, t: 0 }; stPop(s, '爽度 −150', '#ff5252', 330, 280, true);
+  s.flash = 1; s.shake = 14; SFX.boss(); buzz(120); stSay(s, 'boss', line || pick(ST_CAUGHT), 160);
+  s.score = Math.max(0, s.score - 300); s.stamp = { text: `⚠️ 警告 ${s.warn} / 3`, t: 0 }; stPop(s, '爽度 −300', '#ff5252', 330, 280, true);
   if (s.peach && s.peach.phase === 'wait') { s.peach.phase = 'out'; stSay(s, 'peach', '（水蜜桃得意地笑了）', 120); }
 }
 function stEnd(s, win) {
-  s.phase = win ? 'win' : 'lose'; s.t = 0; s.hold = false; playSong(null);
-  if (win) { SFX.win(); stSay(s, 'boss', '大家辛苦了～下班！（自己先走）', 300); } else { SFX.die(); }
+  s.phase = win ? 'win' : 'lose'; s.t = 0; s.hold = false; s.ring = s.cheer = null; playSong(null);
+  if (win) { SFX.win(); stSay(s, 'boss', '好，散會！大家辛苦了～下班！', 300); } else { SFX.die(); }
   META.stare = META.stare || {}; META.stare.plays = (META.stare.plays || 0) + 1; let gain = 0; const sc = Math.round(s.score);
   if (win) { const d = todayStr(); if (META.stare.day !== d) { META.stare.day = d; gain = 15 + (s.warn === 0 ? 10 : 0); META.bank += gain; }
-    META.stare.best = Math.max(META.stare.best || 0, sc); if (s.warn === 0 && sc >= 2500) unlock('stare'); }
+    META.stare.best = Math.max(META.stare.best || 0, sc); if (s.warn === 0 && sc >= 9000) unlock('stare'); }
   saveMeta();
   const grade = !win ? ['📝 約談名單', '老闆：「明天早上，來我辦公室一下。」']
-    : sc < 400 ? ['😇 真．模範員工', '你真的認真工作了一小時。老闆很感動，你的靈魂很痛。']
-    : s.warn === 0 && sc >= 3500 ? ['🐟 摸魚宗師', '摸了一整個小時，老闆還誇你認真。']
-    : sc >= 3500 ? ['🏖️ 帶薪度假', '雖然被抓了幾次，但你玩得很開心。']
-    : sc >= 1800 ? ['📱 低調低頭族', '摸得剛剛好，沒人發現（大概）。']
+    : sc < 1200 ? ['😇 真．模範員工', '你真的認真工作了一小時。老闆很感動，你的靈魂很痛。']
+    : s.warn === 0 && sc >= 12000 ? ['🐟 摸魚宗師', '摸了一整個小時，老闆還誇你認真。']
+    : sc >= 12000 ? ['🏖️ 帶薪度假', '雖然被抓了幾次，但你玩得很開心。']
+    : sc >= 6500 ? ['📱 低調低頭族', '摸得剛剛好，沒人發現（大概）。']
     : ['☕ 小摸怡情', '偶爾滑一下手機，人生需要喘口氣。'];
-  s.res = { win, gain, grade, sc };
+  s.res = { win, gain, grade, sc }; s.eye = Math.random() < 0.5 ? EYE_TIPS[0] : pick(EYE_TIPS);
 }
+// ---- 突發狀況：手機響、SSR ----
+function stQte() {
+  const s = G.st; if (!s || s.phase !== 'play') return;
+  if (s.ring) { s.ring = null; s.stats.ringOk++; s.score += 30; stPop(s, '🔇 靜音成功！+30', '#69f0ae', 400, 250, true); SFX.coin(); return; }
+  if (s.cheer) { const c = s.cheer; c.n++; tone(300 + c.n * 60, 0.05, 'square', 0.06); s.shake = 3;
+    if (c.n >= c.need) { s.cheer = null; s.stats.ssrOk++; s.score += 200; stPop(s, '（小聲）耶……SSR +200', '#ffd54f', 400, 250, true); SFX.oneup(); } }
+}
+function stQteStep(s) {
+  const b = s.b, quiet = !s.final && !s.cw && !s.peach && !s.sneeze && s.meet <= 0 && stCalm(s);
+  if (!s.ring && !s.cheer && s.hold && quiet && s.time >= s.nextRing && b.dur - b.t > 20) {
+    s.ring = { t: 0 }; s.stats.ring++; s.nextRing = s.time + Math.round(rand(1500, 2400)); b.dur = Math.max(b.dur, b.t + 90); buzz(200); }
+  if (!s.ring && !s.cheer && s.hold && quiet && s.act === ST_GAME && s.cheerArmed && s.actT >= 90 && b.dur - b.t > 20) {
+    s.cheerArmed = false; if (Math.random() < 0.8) { s.cheer = { t: 0, n: 0, need: 6, lim: 130 }; s.stats.ssr++; b.dur = Math.max(b.dur, b.t + 150); SFX.letter(); stPop(s, '🌟 SSR！！！', '#ffd54f', 400, 260, true); } }
+  if (s.act !== ST_GAME) s.cheerArmed = true;
+  if (s.ring) { const r = s.ring; r.t++;
+    if (r.t % 20 === 1) { tone(1568, 0.09, 'square', 0.1); tone(1319, 0.12, 'square', 0.1, 0, 0.1); }
+    if (r.t >= 60) { s.ring = null; s.score = Math.max(0, s.score - 50); stForceTurn(s, 10, '……誰的手機在響？'); stPop(s, '🔔 叮咚～叮咚～', '#ff8a80', 400, 250, true); } }
+  if (s.cheer) { const c = s.cheer; c.t++;
+    if (c.t >= c.lim) { s.cheer = null; s.yell = 140; s.score = Math.max(0, s.score - 100); stForceTurn(s, 8, '……？？？'); stPop(s, '耶～～！！SSR！！！', '#ff5252', 380, 250, true); SFX.event(); s.shake = 10; } }
+}
+// ---- 奇葩同事亂入 ----
+function stCameoStep(s) {
+  const b = s.b;
+  if (!s.cw && s.sched.length && s.time >= s.sched[0].t && !s.final) {
+    if (s.peach || s.ring || s.cheer || s.sneeze || s.meet > 0 || !stCalm(s)) s.sched[0].t += 30;
+    else { const k = s.sched.shift().kind; s.cw = { kind: k, x: W + 70, t: 0, phase: 'in', started: false }; s.stats.cameo++; stSay(s, k, ST_CAMEO[k].hi, 120); } }
+  const c = s.cw; if (!c) return; c.t++;
+  if (c.phase === 'in') { c.x -= 3.4; if (c.x <= ST_CAMEO[c.kind].tx) { c.x = ST_CAMEO[c.kind].tx; c.phase = 'act'; c.t = 0; } return; }
+  if (c.phase === 'out') { c.x += 3.6; if (c.x > W + 90) s.cw = null; return; }
+  if (!c.started) { if (!stCalm(s) && c.kind !== 'lemon' && c.kind !== 'coconut') { c.t = 0; return; } c.started = true; c.t = 1;
+    if (c.kind === 'lemon') { const steal = clamp(Math.round(s.score * 0.05), 40, 250); s.score = Math.max(0, s.score - steal); c.steal = steal; stSay(s, 'lemon', '這是我的喔～（拿走你的餅乾）', 150); stPop(s, `🍪 被偷走 −${steal}`, '#ff8a65', 250, 270, true); SFX.hurt(); }
+    if (c.kind === 'coconut') { s.meet = 300; stHold(false); s.hold = false; stSay(s, 'coconut', '耽誤你 5 分鐘就好！（拉你開會）', 200); SFX.event(); }
+    if (c.kind === 'chili') { b.mode = 'curry'; b.t = 0; b.dur = 300; stSay(s, 'chili', '微波一下咖哩～（香味飄進去了）', 160); stSay(s, 'boss', '（聞）……咖哩？好香……', 160); }
+    if (c.kind === 'banana') { s.sneeze = { t: 0 }; stSay(s, 'banana', '好熱喔，我調一下～（16°C）', 150); tone(880, 0.06, 'sine', 0.05); }
+    return; }
+  if (c.kind === 'lemon' && c.t >= 90) { c.phase = 'out'; }
+  if (c.kind === 'coconut' && s.meet <= 0) { c.phase = 'out'; stSay(s, 'coconut', '那我們下次再對齊～', 100); }
+  if (c.kind === 'chili' && c.t >= 300) { c.phase = 'out'; }
+  if (c.kind === 'banana' && c.t >= 150) { c.phase = 'out'; }
+}
+function stSneezeStep(s) {
+  const z = s.sneeze; if (!z) return; z.t++;
+  if (z.t === 90) { tone(660, 0.3, 'sine', 0.05, 900); }
+  if (z.t === 140) { s.sneeze = null; stPop(s, '哈啾！！', '#fff', hxStare() + 10, 290, true); noise(0.25, 0.25); s.shake = 6;
+    if (stCalm(s) || s.b.mode === 'warn' || s.b.mode === 'mirror') stForceTurn(s, 10, '嗯？（疑惑地看過來）'); }
+}
+const hxStare = () => 330;
 function updateStare() {
   const s = G.st; if (!s) return; s.t++;
-  if (s.shake > 0) s.shake *= 0.85; if (s.flash > 0) s.flash -= 0.04;
+  if (s.shake > 0) s.shake *= 0.85; if (s.flash > 0) s.flash -= 0.04; if (s.yell > 0) s.yell--;
   for (const p of s.pops) p.t++; s.pops = s.pops.filter(p => p.t < (p.big ? 90 : 60));
-  if (s.say && --s.say.t <= 0) s.say = null; if (s.stamp && ++s.stamp.t > 110) s.stamp = null;
+  if (s.say && --s.say.t <= 0) s.say = null; if (s.csay && --s.csay.t <= 0) s.csay = null; if (s.stamp && ++s.stamp.t > 110) s.stamp = null;
   if (s.phase !== 'play') { if (s.phase === 'win') s.b.rot = Math.min(1, s.b.rot + 0.05); return; }
-  s.time++; const b = s.b, d = s.time / ST_DUR; b.t++;
-  const prevRot = b.rot;
+  s.time++; const b = s.b; b.t++;
+  const d = s.time / ST_DUR, prevRot = b.rot;
+  if (s.meet > 0) { s.meet--; s.hold = false; }
+  s.cold = s.sneeze ? Math.min(1, s.cold + 0.02) : Math.max(0, s.cold - 0.004);
+  // 17:59 最後一擊
+  if (!s.final && s.time >= ST_DUR) {
+    s.final = { t: 0 }; s.cw = null; s.peach = null; s.ring = s.cheer = s.sneeze = null; s.meet = 0; s.hold = false; s.csay = null;
+    b.mode = 'announce'; b.t = 0; b.rot = 1; stSay(s, 'boss', '（站起來）大家先別走～開個短會！', 170); s.stamp = { text: '⏰ 17:59 最後一擊！', t: 0 }; SFX.boss(); playSong('boss');
+  }
+  if (s.final) { s.final.t++;
+    if (s.final.t === 150) { b.mode = 'back'; b.t = 0; stSay(s, 'boss', '那我們很快地過一下……（坐回去翻資料）', 140); }
+    if (s.final.t >= 150 + ST_FINAL && ['away', 'warn'].includes(b.mode)) { stEnd(s, true); return; } }
   // 水蜜桃：走去打小報告
   if (s.peach) { const p = s.peach; p.t++;
     if (p.phase === 'in') { p.x -= 3; if (p.x <= 600) { p.phase = 'wait'; p.t = 0; stSay(s, 'peach', '老闆！阿葡在摸魚！', 150); b.mode = 'warn'; b.ev = 'turn'; b.dur = 14; b.t = 0; SFX.event(); } }
     else if (p.phase === 'out') { p.x += 3.4; if (p.x > W + 90) s.peach = null; } }
+  stCameoStep(s); stSneezeStep(s);
   switch (b.mode) {
-    case 'away': b.rot = Math.max(0, b.rot - 0.1); if (b.t >= b.dur) stBossNext(s); break;
+    case 'away': b.rot = Math.max(0, b.rot - 0.1); if (b.next === 'double' && b.t === 2) { tone(2637, 0.08, 'sine', 0.07); tone(3136, 0.1, 'sine', 0.06, 0, 0.06); } if (b.t >= b.dur) stBossNext(s); break;
     case 'warn':
       b.rot = 0.04 + Math.sin(b.t * 0.6) * 0.03;
       if (b.t >= b.dur) { b.t = 0;
-        if (b.ev === 'turn') { b.mode = 'turn'; b.dur = Math.round(stLerp(16, 10, d)); tone(240, 0.14, 'sawtooth', 0.05, 160); }
+        if (b.ev === 'turn') { b.mode = 'turn'; b.dur = s.final ? 10 : Math.round(stLerp(16, 11, d)); tone(240, 0.14, 'sawtooth', 0.05, 160); }
         else if (b.ev === 'half') { b.mode = 'half'; }
-        else { b.mode = 'away'; b.dur = Math.round(rand(110, 220) * stLerp(1, 0.55, d)); s.fakes++; stSay(s, 'boss', '……（繼續看他的螢幕）', 100); if (s.hold) stPop(s, '假動作！', '#ffd54f', 330, 290); } }
+        else { b.mode = 'away'; b.dur = s.final ? Math.round(rand(30, 70)) : Math.round(rand(110, 220) * stLerp(1, 0.55, d)); s.fakes++; stSay(s, 'boss', '……（繼續看他的螢幕）', 100); if (s.hold) stPop(s, '假動作！', '#ffd54f', 330, 290); } }
       break;
-    case 'turn': b.rot = Math.min(1, b.rot + 1 / b.dur); if (b.rot >= 1) { b.mode = 'look'; b.t = 0; b.dur = Math.round(rand(80, 150)); b.dbl = Math.random() < 0.12 + 0.3 * d; } break;
+    case 'turn': b.rot = Math.min(1, b.rot + 1 / b.dur); if (b.rot >= 1) { b.mode = 'look'; b.t = 0; b.dur = s.final ? Math.round(rand(50, 90)) : Math.round(rand(80, 150)); b.dbl = Math.random() < (s.final ? 0.25 : 0.12 + 0.25 * d); } break;
     case 'half': b.rot = b.t < 14 ? b.t / 14 * 0.45 : b.t < 44 ? 0.45 : 0.45 - (b.t - 44) / 14 * 0.45;
       if (b.t === 16) { stSay(s, 'boss', '……（虛晃一招）', 90); if (s.hold) stPop(s, '虛晃一招！', '#ffd54f', 330, 290); }
       if (b.t >= 58) { b.mode = 'away'; b.t = 0; b.dur = Math.round(rand(90, 200) * stLerp(1, 0.55, d)); s.fakes++; } break;
     case 'look':
       b.rot = 1;
       if (b.t === 28 && !s.hold) {
-        if (s.peach && s.peach.phase === 'wait') { s.counter++; s.score += 100; stSay(s, 'boss', '哪有？他很認真啊。水蜜桃，你回去工作。', 170); stPop(s, '反將一軍！+100', '#69f0ae', 330, 280, true); s.peach.phase = 'out'; SFX.coin(); }
+        if (s.peach && s.peach.phase === 'wait') { s.counter++; s.score += 150; stSay(s, 'boss', '哪有？他很認真啊。水蜜桃，你回去工作。', 170); stPop(s, '反將一軍！+150', '#69f0ae', 330, 280, true); s.peach.phase = 'out'; SFX.coin(); }
+        else if (s.meet > 0) { s.praise++; s.score += 30; stSay(s, 'boss', '嗯，在開會，很好。', 110); }
         else if (Math.random() < 0.55) { s.praise++; s.score += 30; stSay(s, 'boss', pick(ST_GOOD), 110); stPop(s, '裝認真 +30', '#69f0ae', 330, 290); }
       }
       if (b.t >= b.dur) { b.mode = 'back'; b.t = 0; } break;
     case 'back': b.rot = Math.max(0, b.rot - 1 / 12);
       if (b.rot <= 0) { b.mode = 'away'; b.t = 0;
         if (b.dbl) { b.dbl = false; b.next = 'double'; b.dur = Math.round(rand(18, 34)); }
-        else b.dur = Math.round(rand(150, 300) * stLerp(1, 0.45, d));
+        else b.dur = s.final ? Math.round(rand(40, 110)) : Math.round(rand(150, 300) * stLerp(1, 0.45, d));
         if (s.peach && s.peach.phase === 'wait') s.peach.phase = 'out'; } break;
     case 'phone': b.rot = 0; if (b.t % 70 === 30) stSay(s, 'boss', pick(['哈哈哈對啊～', '高爾夫？好啊！', '那個案子喔……嗯嗯', '沒問題沒問題']), 80); if (b.t >= b.dur) { b.mode = 'away'; b.t = 0; b.dur = 40; stSay(s, 'boss', '（掛掉電話）', 60); } break;
+    case 'curry': b.rot = 0; if (b.t % 80 === 40) stSay(s, 'boss', pick(['（聞）……好香……', '是誰在熱咖哩……', '（肚子咕嚕叫）']), 80); if (b.t >= b.dur) { b.mode = 'away'; b.t = 0; b.dur = Math.round(rand(60, 120)); stSay(s, 'boss', '（回神）……剛剛說到哪？', 80); } break;
+    case 'mirror': b.rot = 0; if (b.t >= b.dur) { b.mode = 'away'; b.t = 0; b.dur = Math.round(rand(90, 180)); } break;
+    case 'announce': b.rot = 1; break;
     case 'caught': b.rot = 1; if (b.t >= 150) { b.mode = 'back'; b.t = 0; b.dbl = false; } break;
   }
-  // 被看到了嗎？
+  // 被看到了嗎？（轉頭、玻璃倒影）
   const LOOK = 0.72;
-  if (b.rot >= LOOK && b.mode !== 'caught') { if (s.hold) stCaught(s); else if (prevRot < LOOK && s.time - s.lastRel <= 10) { s.near++; s.score += 50; stPop(s, '千鈞一髮！+50', '#ffd54f', 330, 270, true); SFX.coin(); } }
+  if (b.rot >= LOOK && !['caught', 'announce'].includes(b.mode)) { if (s.hold) stCaught(s); else if (prevRot < LOOK && s.time - s.lastRel <= 10) { s.near++; s.score += 50; stPop(s, '千鈞一髮！+50', '#ffd54f', 330, 270, true); SFX.coin(); } }
+  if (b.mode === 'mirror' && b.t >= 30 && b.t < b.dur - 15 && s.hold) stCaught(s, '我從玻璃倒影都看到了。');
   if (s.warn >= 3) { stEnd(s, false); return; }
+  stQteStep(s);
   // 摸魚：累積爽度（越久不放手，倍率越高）
   if (s.hold) { s.holdT++; s.actT++;
-    const mul = 1 + Math.min(3, Math.floor(s.holdT / 90) * 0.5), ph = b.mode === 'phone' ? 2 : 1;
+    const mul = 1 + Math.min(3, Math.floor(s.holdT / 90) * 0.5), ph = (b.mode === 'phone' ? 2 : b.mode === 'curry' ? 1.5 : 1) * (s.final ? 2 : 1);
     s.score += mul * ph;
     if (s.holdT % 90 === 0 && s.holdT > 0) { const a = ST_ACTS[s.act]; stPop(s, pick(a[2]), '#fff59d', 380 + rand(-20, 30), 290); if (mul > 1) chatter('caddie', 1); }
     if (s.actT >= 220) { s.actT = 0; s.act = (s.act + 1) % ST_ACTS.length; } }
-  if (s.time >= ST_DUR) stEnd(s, true);
 }
 function stareKey(e, down) {
   const s = G.st; if (!s) return;
@@ -8051,6 +8139,7 @@ function stareKey(e, down) {
   if (e.repeat) return;
   if (s.phase === 'intro' && ['Space', 'Enter'].includes(e.code)) { stStart(); return; }
   if ((s.phase === 'win' || s.phase === 'lose') && s.t > 60 && ['Space', 'Enter'].includes(e.code)) { openStare(); return; }
+  if (['KeyX', 'KeyJ', 'KeyC'].includes(e.code)) { stQte(); return; }
   if (['Space', 'Enter', 'ArrowDown', 'KeyS', 'KeyZ', 'KeyK', 'ArrowUp', 'KeyW'].includes(e.code)) stHold(true);
 }
 // ---- 畫面 ----
@@ -8064,9 +8153,10 @@ function drawDurianBack(x, y, s) {                                 // 老闆的�
 function stBubble(x, y, text, dark) {
   ctx.font = `bold 15px ${FONT}`; const w = Math.min(430, ctx.measureText(text).width + 28), bx = clamp(x - w / 2, 10, W - w - 10), by = y;
   ctx.fillStyle = dark ? 'rgba(33,33,33,.86)' : '#fff'; rr(bx, by - 22, w, 34, 12); ctx.fill();
-  if (!dark) { const tx = clamp(x, bx + 14, bx + w - 14); ctx.beginPath(); ctx.moveTo(tx - 8, by + 12); ctx.lineTo(tx + 8, by + 12); ctx.lineTo(tx, by + 24); ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.lineWidth = 1; }
+  if (!dark) { const tx = clamp(x, bx + 14, bx + w - 14); ctx.beginPath(); ctx.moveTo(tx - 8, by + 12); ctx.lineTo(tx + 8, by + 12); ctx.lineTo(tx, by + 24); ctx.fill(); }
   txtFit(text, bx + w / 2, by + 1, w - 20, 15, dark ? '#fff' : '#3e2723', 'center');
 }
+function stDrawFruit(kind, x, t, face, walking) { ctx.save(); ctx.translate(x, 380); ctx.scale(2.3, 2.3); const O = ODD[kind]; drawOdd({ kind, x: -O.w / 2, y: -O.h, w: O.w, h: O.h, face, alive: true, t, vx: walking ? 1 : 0, home: kind === 'banana' ? -9999 : -O.w / 2 }); ctx.restore(); }
 function drawStare() {
   const s = G.st; if (!s) return; const b = s.b, hx = 330, hy = 432;
   ctx.save(); if (s.shake > 0.3) ctx.translate(rand(-s.shake, s.shake), rand(-s.shake, s.shake) * 0.5);
@@ -8075,43 +8165,55 @@ function drawStare() {
   ctx.fillStyle = '#e3d7c4'; for (let x = 0; x < W; x += 80) ctx.fillRect(x, 0, 2, 380);
   const fg = ctx.createLinearGradient(0, 380, 0, H); fg.addColorStop(0, '#a1887f'); fg.addColorStop(1, '#6d4c41'); ctx.fillStyle = fg; ctx.fillRect(-20, 380, W + 40, H);
   // 時鐘
-  const mins = s.phase === 'intro' ? 0 : Math.min(60, Math.floor(s.time / 60)), cx0 = 90, cy0 = 90;
-  ctx.fillStyle = '#fff'; circ(cx0, cy0, 36); ctx.fill(); ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 5; ctx.stroke();
+  const mins = s.phase === 'intro' ? 0 : s.phase === 'win' ? 60 : Math.min(59, Math.floor(s.time / ST_MIN)), cx0 = 90, cy0 = 90;
+  ctx.fillStyle = '#fff'; circ(cx0, cy0, 36); ctx.fill(); ctx.strokeStyle = s.final ? '#d50000' : '#5d4037'; ctx.lineWidth = 5; ctx.stroke();
   ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 4; const ha = (5 + mins / 60) / 12 * Math.PI * 2 - Math.PI / 2, ma = mins / 60 * Math.PI * 2 - Math.PI / 2;
   ctx.beginPath(); ctx.moveTo(cx0, cy0); ctx.lineTo(cx0 + Math.cos(ha) * 18, cy0 + Math.sin(ha) * 18); ctx.stroke(); ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(cx0, cy0); ctx.lineTo(cx0 + Math.cos(ma) * 28, cy0 + Math.sin(ma) * 28); ctx.stroke();
+  // 冷氣面板
+  ctx.fillStyle = '#eceff1'; rr(410, 214, 44, 30, 5); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1.5; ctx.stroke();
+  txt(s.cold > 0.3 ? '16°' : '25°', 432, 235, 14, s.cold > 0.3 ? '#0277bd' : '#455a64', 'center'); txt('冷氣', 432, 258, 10, '#8d6e63', 'center', { weight: 'normal' });
   // 老闆辦公室（玻璃隔間）
   const ox = 470, oy = 60, ow = 440, oh = 320;
   ctx.fillStyle = '#d7ccc8'; ctx.fillRect(ox, oy, ow, oh);
   ctx.fillStyle = '#fff8e1'; rr(ox + 30, oy + 24, 96, 64, 4); ctx.fill(); ctx.strokeStyle = '#8d6e63'; ctx.lineWidth = 4; ctx.stroke(); txt('成功', ox + 78, oy + 66, 26, '#3e2723', 'center');
   ctx.fillStyle = '#ffca28'; rr(ox + ow - 80, oy + 50, 26, 30, 4); ctx.fill(); ctx.fillRect(ox + ow - 74, oy + 80, 14, 10); ctx.fillStyle = '#8d6e63'; ctx.fillRect(ox + ow - 82, oy + 90, 30, 8); txt('⛳', ox + ow - 67, oy + 45, 16, '#000', 'center');
-  // 椅子＋老闆（旋轉）
-  const bx = 690, by = 200, rot = b.rot, mood = b.mode === 'caught' || s.phase === 'lose' ? 'angry' : 'normal';
+  // 椅子＋老闆（旋轉；最後一擊時站起來）
+  const stand = b.mode === 'announce' ? Math.min(1, b.t / 15) : 0;
+  const bx = 690, by = 200 - stand * 40, rot = b.rot, mood = b.mode === 'caught' || s.phase === 'lose' ? 'angry' : 'normal';
   const chair = (k) => { ctx.save(); ctx.translate(bx, 250); ctx.scale(Math.max(0.04, k), 1); ctx.fillStyle = '#3e2723'; rr(-78, -62, 156, 152, 36); ctx.fill(); ctx.fillStyle = '#4e342e'; rr(-66, -52, 132, 130, 28); ctx.fill(); ctx.fillStyle = '#2d1f1a'; for (const [px, py] of [[-30, -24], [30, -24], [0, 0], [-30, 24], [30, 24], [0, 48]]) { circ(px, py, 4); ctx.fill(); } ctx.restore(); };
   if (rot < 0.5) { drawDurianBack(bx, by, 0.85); chair(1 - rot * 2); }
   else { chair(1); ctx.save(); ctx.translate(bx, by); ctx.scale((rot - 0.5) * 2, 1); drawDurian(0, 0, 0.85, mood); ctx.restore(); }
-  if (b.mode === 'phone') { txt('📞', bx + 62, by - 10, 30, '#000', 'center'); }
+  if (b.mode === 'phone') txt('📞', bx + 62, by - 10, 30, '#000', 'center');
+  if (b.mode === 'curry') { txt('💭', bx + 58, by - 70, 34, '#000', 'center'); txt('🍛', bx + 58, by - 74, 18, '#000', 'center'); }
+  if (b.mode === 'away' && b.next === 'double' && s.phase === 'play') { const k = (b.t % 10) / 10; ctx.globalAlpha = 1 - k * 0.5; txt('✨', bx + 64, by - 8, 26 + k * 10, '#000', 'center'); ctx.globalAlpha = 1; }   // 眼鏡反光＝回馬槍
   // 老闆的桌子
   ctx.fillStyle = '#5d4037'; ctx.fillRect(ox + 70, 300, ow - 140, 80); ctx.fillStyle = '#795548'; ctx.fillRect(ox + 60, 292, ow - 120, 12);
   ctx.fillStyle = '#fff'; rr(ox + 190, 300, 60, 18, 3); ctx.fill(); txt('總經理', ox + 220, 314, 12, '#5d4037', 'center');
-  // 玻璃＋門牌
+  // 咖哩味飄進來
+  if (b.mode === 'curry') { ctx.globalAlpha = 0.5; for (let i = 0; i < 9; i++) { const k = ((b.t * 0.6 + i * 37) % 220) / 220, gx = 610 + k * 110 + Math.sin(b.t * 0.05 + i) * 14, gy = 330 - k * 170; ctx.fillStyle = i % 2 ? '#fff176' : '#d4e157'; circ(gx, gy, 12 + (i % 3) * 5); ctx.fill(); } ctx.globalAlpha = 1; }
+  // 玻璃＋倒影＋門牌
   ctx.fillStyle = 'rgba(179,229,252,.16)'; ctx.fillRect(ox, oy, ow, oh);
+  if (b.mode === 'mirror') { const a = Math.min(1, b.t / 30) * Math.min(1, (b.dur - b.t) / 15);
+    ctx.save(); ctx.globalAlpha = 0.42 * a; ctx.translate(530, 175); ctx.scale(-1, 1); drawDurian(0, 0, 0.42, 'normal'); ctx.restore(); ctx.globalAlpha = 1;
+    if (b.t < 30) txt('✨', 530 + Math.sin(b.t * 0.4) * 20, 130, 26, '#000', 'center'); else if (s.phase === 'play') txt('🪞 倒影！', 530, 245, 16, '#d50000', 'center', { stroke: '#fff', sw: 4 }); }
   ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 6; for (const gx of [ox + 60, ox + 250]) { ctx.beginPath(); ctx.moveTo(gx, oy + oh); ctx.lineTo(gx + 120, oy); ctx.stroke(); }
   ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 8; ctx.strokeRect(ox, oy, ow, oh); ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(ox + ow / 2 - 120, oy); ctx.lineTo(ox + ow / 2 - 120, oy + oh); ctx.stroke();
   ctx.fillStyle = '#37474f'; rr(ox + 8, oy - 30, 110, 26, 6); ctx.fill(); txt('總經理室', ox + 63, oy - 11, 14, '#fff', 'center');
-  // 盯——
-  if (rot >= 0.72 && s.phase === 'play') { txt('👁 盯——', bx, 70, 26, '#d50000', 'center', { stroke: '#fff', sw: 6 }); }
-  // 水蜜桃
-  if (s.peach) { const p = s.peach; ctx.save(); ctx.translate(p.x, 380); ctx.scale(2.3, 2.3); drawOdd({ kind: 'peach', x: -13, y: -30, w: 26, h: 30, face: p.phase === 'out' ? 1 : -1, alive: true, t: p.t, vx: p.phase === 'wait' ? 0 : 1 }); ctx.restore(); }
+  if (rot >= 0.72 && s.phase === 'play' && b.mode !== 'announce') txt('👁 盯——', bx, 70, 26, '#d50000', 'center', { stroke: '#fff', sw: 6 });
+  // 水蜜桃、亂入的同事
+  if (s.peach) stDrawFruit('peach', s.peach.x, s.peach.t, s.peach.phase === 'out' ? 1 : -1, s.peach.phase !== 'wait');
+  if (s.cw) { const c = s.cw; stDrawFruit(c.kind, c.x, c.t, c.phase === 'out' ? 1 : -1, c.phase !== 'act');
+    if (c.kind === 'lemon' && c.started) txt('🍪', c.x + (c.phase === 'out' ? 22 : -22), 330, 20, '#000', 'center'); }
   // 阿葡＋桌子＋螢幕
-  const slack = s.hold && s.phase === 'play', caught = b.mode === 'caught';
-  ctx.save(); if (slack) { ctx.translate(hx, hy); ctx.rotate(0.08); ctx.translate(-hx, -hy); }
-  drawHero(hx, hy, 4, slack ? 1 : -1, 0, false, { happy: slack, hurt: caught });
+  const slack = s.hold && s.phase === 'play', caught = b.mode === 'caught', snz = s.sneeze && s.sneeze.t >= 90;
+  ctx.save(); if (slack) { ctx.translate(hx, hy); ctx.rotate(0.08); ctx.translate(-hx, -hy); } if (snz) { ctx.translate(hx, hy); ctx.rotate(-0.05 * (s.sneeze.t - 90) / 50); ctx.translate(-hx, -hy); }
+  drawHero(hx, hy, 4, slack ? 1 : -1, 0, false, { happy: slack && !s.cheer, hurt: caught || !!s.ring, sleep: !!snz });
   ctx.restore();
-  if (slack) {                                                     // 手機
-    const px = hx + 66, py = 340 + Math.sin(FC * 0.1) * 2, a = ST_ACTS[s.act];
-    ctx.fillStyle = '#212121'; rr(px - 20, py - 34, 40, 66, 7); ctx.fill(); ctx.fillStyle = b.mode === 'phone' ? '#fff59d' : '#b3e5fc'; rr(px - 16, py - 28, 32, 52, 4); ctx.fill();
-    txt(a[0], px, py + 8, 22, '#000', 'center'); ctx.fillStyle = 'rgba(179,229,252,.25)'; circ(px, py, 46); ctx.fill();
-    txt(a[1], px, py - 44, 13, '#3e2723', 'center', { stroke: '#fff', sw: 4 });
+  if (slack || s.ring) {                                           // 手機
+    const ring = !!s.ring, px = hx + 66 + (ring ? rand(-4, 4) : 0), py = 340 + Math.sin(FC * 0.1) * 2, a = ST_ACTS[s.act];
+    ctx.fillStyle = '#212121'; rr(px - 20, py - 34, 40, 66, 7); ctx.fill(); ctx.fillStyle = ring ? '#ff8a80' : b.mode === 'phone' ? '#fff59d' : s.cheer ? '#ffe082' : '#b3e5fc'; rr(px - 16, py - 28, 32, 52, 4); ctx.fill();
+    txt(ring ? '🔔' : s.cheer ? '🌟' : a[0], px, py + 8, 22, '#000', 'center'); ctx.fillStyle = 'rgba(179,229,252,.25)'; circ(px, py, 46); ctx.fill();
+    txt(ring ? '叮咚～叮咚～' : s.cheer ? 'SSR！！！' : a[1], px, py - 44, ring || s.cheer ? 16 : 13, ring ? '#d50000' : '#3e2723', 'center', { stroke: '#fff', sw: 4 });
   }
   ctx.fillStyle = '#263238'; rr(140, 296, 150, 100, 6); ctx.fill(); ctx.fillStyle = '#e8f5e9'; ctx.fillRect(148, 304, 134, 84);    // 螢幕：Excel
   ctx.strokeStyle = '#a5d6a7'; ctx.lineWidth = 1; for (let i = 1; i < 7; i++) { ctx.beginPath(); ctx.moveTo(148, 304 + i * 12); ctx.lineTo(282, 304 + i * 12); ctx.stroke(); } for (let i = 1; i < 5; i++) { ctx.beginPath(); ctx.moveTo(148 + i * 27, 304); ctx.lineTo(148 + i * 27, 388); ctx.stroke(); }
@@ -8119,47 +8221,75 @@ function drawStare() {
   const dg = ctx.createLinearGradient(0, 410, 0, H); dg.addColorStop(0, '#a1887f'); dg.addColorStop(0.06, '#8d6e63'); dg.addColorStop(1, '#5d4037'); ctx.fillStyle = dg; ctx.fillRect(100, 410, 340, H - 410);
   ctx.fillStyle = '#bcaaa4'; ctx.fillRect(96, 404, 348, 10); ctx.fillStyle = '#eceff1'; rr(170, 398, 90, 10, 3); ctx.fill();
   ctx.fillStyle = '#fff59d'; ctx.save(); ctx.translate(272, 302); ctx.rotate(0.12); ctx.fillRect(-18, -16, 36, 32); txt('裝忙', 0, 5, 11, '#5d4037', 'center'); ctx.restore();
-  if (!slack && s.phase === 'play' && FC % 24 < 14) txt('噠噠噠', 230, 440, 14, '#fff', 'center', { stroke: '#4e342e', sw: 3 });
+  if (!(s.cw && s.cw.kind === 'lemon' && s.cw.started)) txt('🍪', 120, 400, 18, '#000', 'center');                                 // 桌上的餅乾
+  if (!slack && s.phase === 'play' && s.meet <= 0 && FC % 24 < 14) txt('噠噠噠', 230, 440, 14, '#fff', 'center', { stroke: '#4e342e', sw: 3 });
+  // 開會泡泡
+  if (s.meet > 0) { const r = 92 + Math.sin(FC * 0.1) * 3; ctx.fillStyle = 'rgba(255,255,255,.22)'; circ(hx, 360, r); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#fafafa'; rr(hx - 70, 172, 140, 58, 6); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 2; ctx.stroke(); txt('Q3 對齊會議', hx, 196, 15, '#37474f', 'center'); txt(`v${12 + Math.floor((300 - s.meet) / 60)}（最終版）`, hx, 218, 12, '#90a4ae', 'center', { weight: 'normal' });
+    txt(`🗓️ 開會中…… ${Math.ceil(s.meet / 60)}`, hx, 470, 16, '#fff', 'center', { stroke: '#4e342e', sw: 4 }); }
+  // 冷氣、噴嚏
+  if (s.cold > 0.02) { ctx.fillStyle = `rgba(129,212,250,${0.16 * s.cold})`; ctx.fillRect(-20, -20, W + 40, H + 40); ctx.globalAlpha = s.cold; for (let i = 0; i < 12; i++) txt('❄', (i * 83 + FC * 0.6) % 460, (i * 47 + FC * 1.1) % 420 + 60, 14, '#e1f5fe', 'center'); ctx.globalAlpha = 1; }
+  if (snz) txt(s.sneeze.t < 115 ? '🤧 哈……' : '🤧 哈……哈……', 220, 262 + rand(-2, 2), 22, '#0277bd', 'center', { stroke: '#fff', sw: 5 });
+  // 整間辦公室都轉頭
+  if (s.yell > 0) for (let i = 0; i < 7; i++) txt('👀', [40, 120, 470, 520, 590, 860, 930][i], 360 + Math.sin(FC * 0.3 + i) * 4, 26, '#000', 'center');
   if (s.flash > 0) { ctx.fillStyle = `rgba(255,23,68,${s.flash * 0.35})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
   ctx.restore();
   // 對話
-  if (s.say) { if (s.say.who === 'boss') stBubble(bx, 112, s.say.text, s.say.text.startsWith('（') || s.say.text.startsWith('…')); else stBubble(s.peach ? s.peach.x : 700, 268, s.say.text, s.say.text.startsWith('（')); }
+  if (s.say) stBubble(bx, 112, s.say.text, s.say.text.startsWith('（') || s.say.text.startsWith('…'));
+  if (s.csay) { const cx = s.csay.who === 'peach' && s.peach ? s.peach.x : s.cw ? s.cw.x : 700; stBubble(cx, 268, s.csay.text, s.csay.text.startsWith('（')); }
   for (const p of s.pops) txt(p.text, p.x, p.y - p.t * 0.7, p.big ? 24 : 16, p.col, 'center', { stroke: '#3e2723', sw: 4 });
   if (s.stamp) { const k = Math.min(1, s.stamp.t / 8); ctx.save(); ctx.translate(W / 2, 230); ctx.rotate(-0.12); ctx.scale(2 - k, 2 - k); ctx.globalAlpha = Math.min(1, (110 - s.stamp.t) / 20);
-    ctx.strokeStyle = '#d50000'; ctx.lineWidth = 6; rr(-130, -34, 260, 64, 10); ctx.stroke(); txt(s.stamp.text, 0, 12, 34, '#d50000', 'center'); ctx.restore(); ctx.globalAlpha = 1; }
+    ctx.font = `bold 34px ${FONT}`; const sw = ctx.measureText(s.stamp.text).width + 50; ctx.strokeStyle = '#d50000'; ctx.lineWidth = 6; rr(-sw / 2, -34, sw, 64, 10); ctx.stroke(); txt(s.stamp.text, 0, 12, 34, '#d50000', 'center'); ctx.restore(); ctx.globalAlpha = 1; }
+  // 突發狀況按鈕
+  if (s.phase === 'play' && (s.ring || s.cheer)) {
+    const bw = 280, bx0 = W / 2 - bw / 2 - 20, by0 = 432, k = s.ring ? 1 - s.ring.t / 60 : 1 - s.cheer.t / s.cheer.lim;
+    if (!G.capture) drawBtn(bx0, by0, bw, 54, s.ring ? `🔇 快靜音！${isTouch ? '' : '（X）'}` : `😤 忍住！連按${isTouch ? '' : ' X'}`, stQte, s.ring ? '#c62828' : '#ef6c00');
+    ctx.fillStyle = 'rgba(0,0,0,.4)'; rr(bx0, by0 + 60, bw, 7, 3); ctx.fill(); ctx.fillStyle = k < 0.35 ? '#ff5252' : '#ffd54f'; rr(bx0, by0 + 60, bw * k, 7, 3); ctx.fill();
+    if (s.cheer) for (let i = 0; i < s.cheer.need; i++) { ctx.fillStyle = i < s.cheer.n ? '#ffd54f' : 'rgba(255,255,255,.35)'; circ(bx0 + bw / 2 - (s.cheer.need - 1) * 11 + i * 22, by0 - 12, 7); ctx.fill(); }
+  }
   // HUD
   ctx.fillStyle = 'rgba(30,20,40,.78)'; rr(150, 12, 300, 66, 12); ctx.fill();
-  const mul = s.hold ? 1 + Math.min(3, Math.floor(s.holdT / 90) * 0.5) : 1;
+  const mul = s.hold ? 1 + Math.min(3, Math.floor(s.holdT / 90) * 0.5) : 1, bonus = (b.mode === 'phone' ? ' ×2 📞' : b.mode === 'curry' ? ' ×1.5 🍛' : '') + (s.final ? ' ×2 ⏰' : '');
   txt(`😎 爽度 ${Math.round(s.score)}`, 166, 40, 20, '#ffe082');
-  txt(s.hold ? `× ${mul.toFixed(1)}${b.mode === 'phone' ? ' × 2 📞' : ''}` : '', 436, 40, 15, mul >= 3 ? '#ff8a65' : '#fff', 'right');
+  txt(s.hold ? `× ${mul.toFixed(1)}${bonus}` : '', 436, 40, 14, mul >= 3 || s.final ? '#ff8a65' : '#fff', 'right');
   txt('警告', 166, 66, 13, '#e1bee7', 'left', { weight: 'normal' }); for (let i = 0; i < 3; i++) txt(i < s.warn ? '🟥' : '⬜', 210 + i * 24, 68, 16, '#fff', 'center');
-  txt(`🕔 ${s.phase === 'intro' ? '17:00' : `${mins >= 60 ? 18 : 17}:${String(mins % 60).padStart(2, '0')}`}`, 436, 68, 15, '#fff', 'right');
+  if (s.final && s.phase === 'play') txt(`⏰ 17:59　再撐 ${Math.max(0, Math.ceil((150 + ST_FINAL - s.final.t) / 60))} 秒`, 436, 68, 14, FC % 30 < 18 ? '#ff5252' : '#fff', 'right');
+  else txt(`🕔 ${mins >= 60 ? '18:00' : '17:' + String(mins).padStart(2, '0')}`, 436, 68, 15, '#fff', 'right');
+  if (b.mode === 'curry' && s.phase === 'play') txt('🍛 老闆分心中：安心摸魚！', 690, 352, 15, '#827717', 'center', { stroke: '#fff', sw: 4 });
   // 按住提示
   if (s.phase === 'play') {
-    const on = s.hold; ctx.fillStyle = on ? 'rgba(255,193,7,.9)' : 'rgba(30,20,40,.7)'; circ(W - 96, H - 92, 62); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.stroke();
-    txt(on ? '📱' : '⌨️', W - 96, H - 92, 34, '#000', 'center'); txt(on ? '摸魚中' : '按住摸魚', W - 96, H - 56, 15, on ? '#3e2723' : '#fff', 'center');
-    txt(on ? '老闆一轉頭就放開！' : (isTouch ? '按住畫面＝摸魚，放開＝裝認真' : '按住 空白鍵＝摸魚，放開＝裝認真'), W / 2 + 40, H - 18, 14, '#fff', 'center', { stroke: '#3e2723', sw: 4 });
+    const on = s.hold, lock = !stCanHold(s); ctx.fillStyle = lock ? 'rgba(120,120,120,.7)' : on ? 'rgba(255,193,7,.9)' : 'rgba(30,20,40,.7)'; circ(W - 96, H - 92, 62); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.stroke();
+    txt(lock ? '🗓️' : on ? '📱' : '⌨️', W - 96, H - 92, 34, '#000', 'center'); txt(lock ? (s.meet > 0 ? '開會中' : '聽老闆說話') : on ? '摸魚中' : '按住摸魚', W - 96, H - 56, 15, on ? '#3e2723' : '#fff', 'center');
+    if (!s.ring && !s.cheer) txt(on ? '老闆一轉頭就放開！' : (isTouch ? '按住畫面＝摸魚，放開＝裝認真' : '按住 空白鍵＝摸魚，放開＝裝認真'), W / 2 + 40, H - 18, 14, '#fff', 'center', { stroke: '#3e2723', sw: 4 });
   }
   if (!G.capture && s.phase === 'play') drawBtn(12, H - 46, 92, 34, '◀ 離開', () => { G.st = null; openHub('games'); playSong('title'); }, '#455a64');
   // 說明
   if (s.phase === 'intro') {
     ctx.fillStyle = 'rgba(10,10,20,.55)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fffdf5'; rr(W / 2 - 300, 80, 600, 360, 18); ctx.fill(); ctx.strokeStyle = '#6a1b9a'; ctx.lineWidth = 5; ctx.stroke();
-    txt('🕵️ 老闆轉頭就停', W / 2, 130, 30, '#6a1b9a', 'center');
-    txt('17:00，離下班還有一小時。老闆就坐在玻璃辦公室裡……', W / 2, 166, 15, '#5d4037', 'center', { weight: 'normal' });
-    [['📱', '按住 ＝ 摸魚（滑手機、吃零食、看股票）。越久不放，爽度倍率越高'], ['⌨️', '放開 ＝ 假裝認真工作'], ['👀', '老闆轉過來時你還在摸魚 → 警告！3 張警告就約談'], ['🎭', '小心他的假動作、回馬槍，還有來打小報告的水蜜桃']].forEach(([ic, t], i) => { txt(ic, W / 2 - 250, 214 + i * 40, 22, '#000', 'center'); txtFit(t, W / 2 - 226, 214 + i * 40, 500, 15, '#3e2723', 'left'); });
-    if (!G.capture) drawBtn(W / 2 - 110, 370, 220, 48, '🐟 開始摸魚', stStart, '#2e7d32');
-    if (!isTouch) txt('Enter／空白鍵 開始', W / 2, 432, 12, '#8d6e63', 'center', { weight: 'normal' });
+    ctx.fillStyle = '#fffdf5'; rr(W / 2 - 320, 40, 640, 456, 18); ctx.fill(); ctx.strokeStyle = '#6a1b9a'; ctx.lineWidth = 5; ctx.stroke();
+    txt('🕵️ 老闆轉頭就停', W / 2, 88, 30, '#6a1b9a', 'center');
+    txt('17:00，離下班還有一小時（一局約 3 分鐘）。老闆就坐在玻璃辦公室裡……', W / 2, 120, 14, '#5d4037', 'center', { weight: 'normal' });
+    [['📱', '按住＝摸魚，越久不放爽度倍率越高；放開＝假裝認真工作'],
+     ['👀', '老闆轉過來時你還在摸魚 → 警告！3 張警告就約談'],
+     ['🎭', '咳嗽、椅子嘎吱是前兆；小心假動作、虛晃一招'],
+     ['✨', '他眼鏡閃光＝要殺回馬槍；後半段還會從玻璃倒影偷看你'],
+     ['🔔', `手機突然響、抽到 SSR 想尖叫：${isTouch ? '快點畫面上的按鈕' : '快按 X（或點按鈕）'}處理！`],
+     ['👥', '檸檬偷餅乾、椰子拉你開會、辣椒的咖哩讓老闆分心、香蕉害你打噴嚏'],
+     ['⏰', '撐到 17:59 還有「最後一擊」，撐過才是真的下班']].forEach(([ic, t], i) => { txt(ic, W / 2 - 270, 160 + i * 38, 22, '#000', 'center'); txtFit(t, W / 2 - 246, 160 + i * 38, 540, 15, '#3e2723', 'left'); });
+    if (!G.capture) drawBtn(W / 2 - 110, 422, 220, 48, '🐟 開始摸魚', stStart, '#2e7d32');
+    if (!isTouch) txt('Enter／空白鍵 開始', W / 2, 484, 12, '#8d6e63', 'center', { weight: 'normal' });
   }
   if (s.res && s.t > 50) {
-    const r = s.res; ctx.fillStyle = 'rgba(10,10,20,.55)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fffdf5'; rr(W / 2 - 290, 100, 580, 330, 18); ctx.fill(); ctx.strokeStyle = r.win ? '#2e7d32' : '#c62828'; ctx.lineWidth = 5; ctx.stroke();
-    txt(r.win ? '🔔 18:00 下班了！' : '📝 第三張警告……', W / 2, 150, 26, r.win ? '#2e7d32' : '#c62828', 'center');
-    txt(r.grade[0], W / 2, 200, 30, '#e65100', 'center'); txtFit(r.grade[1], W / 2, 238, 520, 16, '#4e342e', 'center');
-    txt(`😎 爽度 ${r.sc}　⚠️ 警告 ${s.warn}　✨ 千鈞一髮 ${s.near} 次　😇 被誇 ${s.praise + s.counter} 次`, W / 2, 274, 14, '#8d6e63', 'center', { weight: 'normal' });
-    txt(r.win ? (r.gain ? `🍇 葡萄 +${r.gain}（每天第一次下班）` : '（今天的葡萄已經領過了）') : '提示：咳嗽、椅子嘎吱聲，都是老闆要轉頭的前兆', W / 2, 304, 14, '#2e7d32', 'center');
-    if (META.stare && META.stare.best) txt(`最高爽度：${META.stare.best}`, W / 2, 330, 13, '#6a1b9a', 'center', { weight: 'normal' });
-    if (!G.capture) { drawBtn(W / 2 - 220, 356, 200, 44, '🔁 再摸一次', openStare, '#2e7d32'); drawBtn(W / 2 + 20, 356, 200, 44, '◀ 小遊戲', () => { G.st = null; openHub('games'); playSong('title'); }, '#455a64'); }
+    const r = s.res, st = s.stats; ctx.fillStyle = 'rgba(10,10,20,.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fffdf5'; rr(W / 2 - 300, 80, 600, 400, 18); ctx.fill(); ctx.strokeStyle = r.win ? '#2e7d32' : '#c62828'; ctx.lineWidth = 5; ctx.stroke();
+    txt(r.win ? '🔔 18:00 下班了！' : '📝 第三張警告……', W / 2, 128, 26, r.win ? '#2e7d32' : '#c62828', 'center');
+    txt(r.grade[0], W / 2, 176, 30, '#e65100', 'center'); txtFit(r.grade[1], W / 2, 212, 540, 16, '#4e342e', 'center');
+    txt(`😎 爽度 ${r.sc}　⚠️ 警告 ${s.warn}　✨ 千鈞一髮 ${s.near} 次　😇 被誇 ${s.praise + s.counter} 次`, W / 2, 246, 14, '#8d6e63', 'center', { weight: 'normal' });
+    txt(`🔇 靜音成功 ${st.ringOk}/${st.ring}　😤 忍住 SSR ${st.ssrOk}/${st.ssr}　👥 同事亂入 ${st.cameo} 次`, W / 2, 270, 14, '#8d6e63', 'center', { weight: 'normal' });
+    txt(r.win ? (r.gain ? `🍇 葡萄 +${r.gain}（每天第一次下班）` : '（今天的葡萄已經領過了）') : '提示：咳嗽、嘎吱聲、眼鏡閃光、窗戶亮光，都是老闆要看你的前兆', W / 2, 300, 14, '#2e7d32', 'center');
+    if (META.stare && META.stare.best) txt(`最高爽度：${META.stare.best}`, W / 2, 324, 13, '#6a1b9a', 'center', { weight: 'normal' });
+    ctx.fillStyle = '#e0f2f1'; rr(W / 2 - 270, 424, 540, 36, 10); ctx.fill(); txtFit(s.eye || EYE_TIPS[0], W / 2, 448, 520, 14, '#00695c', 'center');
+    if (!G.capture) { drawBtn(W / 2 - 220, 352, 200, 44, '🔁 再摸一次', openStare, '#2e7d32'); drawBtn(W / 2 + 20, 352, 200, 44, '◀ 小遊戲', () => { G.st = null; openHub('games'); playSong('title'); }, '#455a64'); }
   }
 }
 
@@ -8200,7 +8330,26 @@ const PH_MAIL = [
   { p: 0, t: 3, f: '榴槤老闆', a: 'durian@grapetech.com.tw', s: '下週一放假', b: ['下週一公司補假一天，', '大家好好休息。'], why: [['from', '網域、內容都正常'], ['body', '看起來最像詐騙，但……這是真的！']] },
   { p: 0, t: 3, f: '公司內網', a: 'intranet@grapetech.com.tw', s: '本月壽星：阿葡 🎂', b: ['本月壽星蛋糕放在茶水間，', '請在下午 3 點前領取。'], l: 'https://intranet.grapetech.com.tw/birthday', why: [['link', '連結是公司內網 intranet.grapetech.com.tw'], ['body', '沒要密碼也沒要錢（快去拿蛋糕）']] },
   { p: 0, t: 3, f: '中華電信', a: 'service@cht.com.tw', s: '您本月的電子帳單', b: ['本月帳單金額 NT$599，', '請透過官方 App 或門市繳費。'], why: [['from', 'cht.com.tw 是官方網域'], ['body', '叫你走官方管道繳費，沒附付款連結']] },
+  // ---- 新手法／AI 手法 ----
+  { p: 1, t: 1, ai: 1, k: 'invest', f: '股神 AI 投資學院', a: 'vip.invest.group@gmail.com', s: '名師 AI 選股，保證每月賺 30%！', b: ['知名財經名人親自拍影片推薦（附影片）。', '加入 LINE 群組免費領飆股，名額只剩 3 位！'], l: 'https://line-vip-stock.club/join', why: [['body', '「保證獲利」＝詐騙；名人推薦影片可能是 AI 深偽'], ['from', '用 gmail 冒充投資機構'], ['link', '把你拉進群組，下一步就是叫你匯錢']] },
+  { p: 1, t: 2, ai: 1, k: 'aiwriting', f: '人資部 HR', a: 'hr@grapetech-hr.com', s: '2026 年度員工福利調整說明（請於本週內確認）', b: ['親愛的同仁您好：為提供更完善的福利，', '請點選下方連結，以公司帳號登入確認您的選擇。'], l: 'https://grapetech-hr.com/benefits', why: [['body', '文筆專業、零錯字——AI 都寫得出來，不能當成判斷依據'], ['from', 'grapetech-hr.com 不是公司網域'], ['link', '要你在外部網站登入公司帳號']] },
+  { p: 1, t: 2, k: 'quishing', f: '總務部', a: 'facility@grapetech-office.com', s: '停車場月租改用 QR Code 繳費', b: ['即日起停車費改為掃碼繳費，', '請用手機掃描下方 QR Code 登入並繳費。'], qr: 1, why: [['qr', 'QR Code 也是連結，而且手機上更難看清網址'], ['from', 'grapetech-office.com 不是公司網域']] },
+  { p: 1, t: 2, ai: 1, k: 'fakeai', f: 'AI 助理 Pro', a: 'promo@ai-pro-free.download', s: '限時免費：AI 自動寫週報外掛（老闆看不出來）', b: ['一鍵生成週報、自動回信、幫你開會！', '下載安裝檔即可永久免費使用。'], at: 'AI週報神器_setup.exe', why: [['att', '來路不明的「AI 外掛」安裝檔，常常是木馬'], ['from', '.download 網域＋免費又神奇＝太好康了']] },
+  { p: 1, t: 2, k: 'svg', f: '電子傳真系統', a: 'fax@grapetech-fax.net', s: '您有 1 份新傳真（共 2 頁）', b: ['請開啟附件查看傳真內容。', '若無法顯示，請重新登入您的公司信箱。'], at: '傳真_1028.svg', why: [['att', '.svg、.html 附件打開可能是假的登入頁'], ['from', 'grapetech-fax.net 不是公司網域'], ['body', '「請重新登入」是偷帳密的前奏']] },
+  { p: 1, t: 3, ai: 1, k: 'deepfake', f: '榴槤老闆', a: 'durian@grapetech-meet.com', s: 'RE: 剛剛的緊急視訊會議', b: ['剛剛視訊裡財務長也在，大家都看到了。', '請照會議說的，今天匯 NT$800 萬到新帳戶。'], why: [['body', '視訊裡的老闆和財務長可能都是 AI 深偽（2024 年香港有公司這樣被騙走約 2 億港幣）'], ['from', '網域是 grapetech-meet.com，不是公司的'], ['body', '大額轉帳：一定要換一個管道（打已知的電話）確認']] },
+  { p: 1, t: 3, ai: 1, k: 'voiceclone', f: '榴槤老闆', a: 'durian@grapetech.com.tw', s: '語音訊息（0:23）', b: ['（老闆的聲音）「我在機場，手機快沒電了，', '先幫我轉 5 萬到這個帳號，落地再跟你說。」'], at: '老闆語音訊息.m4a', why: [['att', 'AI 只要幾秒錄音就能模仿聲音，聽起來像老闆≠是老闆'], ['body', '急＋要錢＋說不方便接電話＝自己回撥老闆的已知號碼']] },
+  { p: 1, t: 3, k: 'clickfix', f: 'Cloudflare 安全驗證', a: 'verify@cloudfiare-check.com', s: '請完成人機驗證以繼續閱讀文件', b: ['為了證明你不是機器人，請依序按：', '① Win＋R　② Ctrl＋V　③ Enter'], why: [['body', '真的人機驗證不會叫你執行指令，這會在你電腦裡跑惡意程式（ClickFix 手法）'], ['from', 'cloudfiare：l 被換成 i']] },
+  { p: 1, t: 3, k: 'mfafatigue', f: 'IT 部門', a: 'it@grapetech.com.tw', rt: 'it.grapetech@outlook.com', s: '系統測試中：請核准登入通知', b: ['等一下手機會一直跳出「登入核准」通知，', '那是系統測試，請全部按「核准」就好。'], why: [['body', '不是你本人在登入，就按「拒絕」並回報（MFA 轟炸）'], ['rt', '回覆地址是 outlook.com']] },
+  { p: 1, t: 3, k: 'oauth', f: 'Grape Drive', a: 'share@grapedrive-share.app', s: '芭樂 分享了「Q4 預算.xlsx」給你', b: ['開啟檔案前，請允許「Doc Viewer Pro」', '讀取你的信箱、聯絡人與所有檔案。'], l: 'https://grapedrive-share.app/oauth/allow', why: [['body', '看一個檔案為什麼要讀你全部的信？不認識的 App 不要授權'], ['from', 'grapedrive-share.app 不是公司的雲端']] },
+  { p: 1, t: 3, ai: 1, k: 'promptinj', f: '西瓜公司 業務', a: 'sales@watermelon-corp.com', s: '合約草稿請過目', b: ['附上合約草稿，麻煩過目，謝謝！', '🤖 AI 摘要：「⚠ 您的帳號異常，請立即撥打 02-8888-0000」'], why: [['body', '信裡藏了看不見的白色小字，專門騙 AI 摘要講出假警告（提示注入）'], ['body', 'AI 摘要叫你打電話或改密碼時，先看原文、自己查官方電話']] },
+  { p: 0, t: 2, ai: 1, h: 'intranet', f: 'IT 部門', a: 'it@grapetech.com.tw', s: '公司 AI 助理使用規範', b: ['請勿把客戶資料、密碼貼到外部 AI 工具。', '公司版 AI 助理請從內網開啟。'], why: [['from', '正確的 IT 信箱'], ['body', '只是提醒規範，沒要你輸入任何東西']] },
+  { p: 0, t: 3, h: 'selfcheck', f: 'Microsoft 帳戶小組', a: 'account-security-noreply@accountprotection.microsoft.com', s: 'Microsoft 帳戶有新的登入', b: ['我們偵測到你的帳戶有新的登入活動。', '如果不是你，請自行前往 account.microsoft.com 檢查。'], why: [['from', '很長但最後一段是 microsoft.com，這是微軟官方網域'], ['body', '叫你「自己」去官網檢查，沒附登入連結']] },
 ];
+// 舊題目對應到的防詐知識卡（詐騙＝k、正常信的好習慣＝h）
+const PH_KEY = { '【急】親愛的朋友，您繼承了 5,000 萬美金': 'freemail', '恭喜您抽中 iPhone 99 Pro Max！': 'prize', '您的信箱已滿！請立即驗證帳號': 'password', '在嗎？幫我買個東西': 'giftcard', '您的包裹地址不全，無法投遞': 'smallfee',
+  '急！請立刻匯款給新廠商': 'bec', '您的密碼將於今天到期': 'lookalike', '2026 年終獎金調整明細': 'zippw', '您的「人體工學椅」已送達大樓': 'domain', '需求文件更新 v12（最終版）': 'macro', '請協助更新 VPN 設定': 'replyto', '幫我看一下這個': 'atsign', '「勞動契約更新」等待您簽署': 'urgency', '老闆說大家都要填這個問卷': 'fakelogin', 'LINE 帳號異常登入，請立即驗證': 'otp', '已讀': 'doubleext',
+  '明天早上 9 點開會': 'noaction', '尾牙報名開始囉 🎉': 'intranet', '週六晚上系統維護公告': 'noaction', '新的裝置登入了你的帳戶': 'selfcheck', '【演練通知】下週將進行社交工程演練': 'report', '提醒：請到內網更新密碼': 'intranet', '[GitHub] A new SSH key was added': 'selfcheck', '您本月的電子帳單': 'selfcheck' };
+for (const m of PH_MAIL) { const k = PH_KEY[m.s]; if (k && !m.k && !m.h) m[m.p ? 'k' : 'h'] = k; }
 const PH_N = 15, PH_MAXBAD = 5, PH_BUGS = ['🦠', '🐛', '👾', '🪲'];
 const PH_OOPS_P = ['你的滑鼠游標開始自己動了……', '螢幕右下角跳出「恭喜中毒」', '印表機開始自己印東西……', '你的桌布被換成了奈及利亞王子'];
 const PH_OOPS_L = ['你把真的信件刪掉了……', '寄件者：「？？？我的信你檢舉了？」', '資安鴨：「不要什麼都檢舉啦」'];
@@ -8209,9 +8358,10 @@ function openPhish() {
   const r = mulberry((hsh(([...day].reduce((s, c) => (s * 31 + c.charCodeAt(0)) % 1000003, 11) + plays * 1231) | 0) % 1e9) | 0);
   const shuf = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const deck = [];
-  for (const t of [1, 2, 3]) { const P = shuf(PH_MAIL.filter(m => m.t === t && m.p)), L = shuf(PH_MAIL.filter(m => m.t === t && !m.p));
+  const newFirst = a => shuf(a.filter(m => SEC_NEW.has(m.k))).concat(shuf(a.filter(m => !SEC_NEW.has(m.k))));
+  for (const t of [1, 2, 3]) { const P = t === 1 ? shuf(PH_MAIL.filter(m => m.t === t && m.p)) : newFirst(PH_MAIL.filter(m => m.t === t && m.p)), L = shuf(PH_MAIL.filter(m => m.t === t && !m.p));
     const pickN = [P.shift(), P.shift(), L.shift(), L.shift(), shuf(P.concat(L))[0]]; deck.push(...shuf(pickN)); }
-  G.ph = { t: 0, phase: 'intro', deck, i: 0, qT: 0, lim: 720, score: 0, streak: 0, best: 0, right: 0, bad: 0, bugs: [], pops: [], shake: 0, flash: 0, drag: null, last: null, slide: 0, rects: {}, res: null, zap: null, r };
+  G.ph = { t: 0, phase: 'intro', deck, i: 0, qT: 0, lim: 720, score: 0, streak: 0, best: 0, right: 0, bad: 0, bugs: [], pops: [], shake: 0, flash: 0, drag: null, last: null, slide: 0, rects: {}, res: null, zap: null, r, got: [] };
   G.state = 'phish'; G.stateT = 0; playSong('inbox');
 }
 function phCur() { const s = G.ph; return s && s.deck[s.i]; }
@@ -8226,6 +8376,7 @@ function phAnswer(guess) {                                          // guess：t
     s.pops.push({ text: `+${gain}`, col: '#69f0ae', x: 290, y: 120, t: 0 });
     if (s.streak % 3 === 0 && s.bugs.length) { s.zap = { t: 0, n: Math.min(2, s.bugs.length) }; }
     s.last = { ok, guess, line: m.p ? '🚨 抓到了！這是釣魚信' : '✅ 沒錯，這是正常的信' };
+    const ck = m.p ? m.k : m.h; if (ck && secGet(ck)) { s.last.card = ck; s.got.push(ck); SFX.letter(); }
   } else { s.streak = 0; s.bad++; s.shake = 12; s.flash = 1; SFX.nope(); buzz(90);
     const n = 1 + s.bad; for (let k = 0; k < n; k++) phBug(s);
     s.last = { ok, guess, line: guess === null ? (m.p ? '⏰ 猶豫太久……同事幫你點開了！' : '⏰ 猶豫太久，已讀不回（你變成洋梨了）') : m.p ? '🎣 上鉤了！這是釣魚信' : '🙈 誤會了！這封是正常的信', oops: m.p ? pick(PH_OOPS_P) : pick(PH_OOPS_L) };
@@ -8296,6 +8447,11 @@ function phCard(m, x0, y0, w, s) {                                  // 畫出一
   ctx.fillStyle = '#e0e0e0'; ctx.fillRect(x0 + 16, y, w - 32, 1.5); y += 30;
   const by0 = y - 20; m.b.forEach(line => { txtFit(line, x0 + 20, y, w - 40, 15, '#424242', 'left', { weight: 'normal' }); y += 25; }); R.body = [x0 + 12, by0, w - 24, y - by0 - 8];
   if (m.l) { y += 6; ctx.fillStyle = '#e3f2fd'; rr(x0 + 16, y - 20, w - 32, 32, 8); ctx.fill(); txtFit('🔗 ' + m.l, x0 + 28, y + 1, w - 56, 14, '#1565c0', 'left'); ctx.fillStyle = '#1565c0'; R.link = [x0 + 12, y - 24, w - 24, 40]; y += 40; }
+  if (m.qr) { y += 4; const qx = x0 + 20, qy = y - 16, qs = 84, N = 21, c = qs / N, rq = mulberry(77);
+    ctx.fillStyle = '#fff'; ctx.fillRect(qx - 4, qy - 4, qs + 8, qs + 8); ctx.strokeStyle = '#bdbdbd'; ctx.lineWidth = 1; ctx.strokeRect(qx - 4, qy - 4, qs + 8, qs + 8); ctx.fillStyle = '#111';
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const fz = (i < 8 && j < 8) || (i > N - 9 && j < 8) || (i < 8 && j > N - 9); if (!fz && rq() < 0.48) ctx.fillRect(qx + i * c, qy + j * c, c + 0.3, c + 0.3); }
+    for (const [fi, fj] of [[0, 0], [N - 7, 0], [0, N - 7]]) { const fx = qx + fi * c, fy = qy + fj * c; ctx.fillStyle = '#111'; ctx.fillRect(fx, fy, 7 * c, 7 * c); ctx.fillStyle = '#fff'; ctx.fillRect(fx + c, fy + c, 5 * c, 5 * c); ctx.fillStyle = '#111'; ctx.fillRect(fx + 2 * c, fy + 2 * c, 3 * c, 3 * c); }
+    txt('📷 請用手機掃描繳費', qx + qs + 16, qy + 46, 14, '#424242', 'left', { weight: 'normal' }); R.qr = [qx - 8, qy - 8, qs + 176, qs + 16]; y += qs + 8; }
   if (m.at) { y += 6; ctx.fillStyle = '#fff3e0'; ctx.font = `bold 14px ${FONT}`; const aw = Math.min(w - 32, ctx.measureText('📎 ' + m.at).width + 28); rr(x0 + 16, y - 20, aw, 32, 8); ctx.fill(); txt('📎 ' + m.at, x0 + 30, y + 1, 14, '#e65100'); R.att = [x0 + 12, y - 24, aw + 8, 40]; }
   return R;
 }
@@ -8328,15 +8484,17 @@ function drawPhish() {
       txt(isTouch ? '← 左滑' : '← 鍵', W / 2 - cw / 2 - 12, 478, 13, '#e1bee7', 'right', { weight: 'normal' }); txt(isTouch ? '右滑 →' : '→ 鍵', W / 2 + cw / 2 + 12, 478, 13, '#e1bee7', 'left', { weight: 'normal' });
     }
     if (s.phase === 'reveal' && s.last && s.slide > 0.3) {            // 解說
-      const px = 572, py = 64, pw = W - px - 16, a = Math.min(1, (s.slide - 0.3) / 0.5); ctx.globalAlpha = a;
-      ctx.fillStyle = 'rgba(255,253,245,.97)'; rr(px, py, pw, 372, 14); ctx.fill(); ctx.strokeStyle = s.last.ok ? '#2e7d32' : '#c62828'; ctx.lineWidth = 4; ctx.stroke();
+      const px = 572, py = 56, pw = W - px - 16, a = Math.min(1, (s.slide - 0.3) / 0.5); ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(255,253,245,.97)'; rr(px, py, pw, 396, 14); ctx.fill(); ctx.strokeStyle = s.last.ok ? '#2e7d32' : '#c62828'; ctx.lineWidth = 4; ctx.stroke();
       txtFit(s.last.line, px + pw / 2, py + 34, pw - 24, 18, s.last.ok ? '#2e7d32' : '#c62828', 'center');
-      let yy = py + 62; if (s.last.oops) { txtFit(s.last.oops, px + pw / 2, yy, pw - 24, 13, '#6d4c41', 'center', { weight: 'normal' }); yy += 22; }
-      txt(m.p ? '🔍 破綻在這裡：' : '👍 為什麼是正常的：', px + 16, yy + 14, 15, '#4a148c'); yy += 26;
+      if (s.last.card) { const c = secCard(s.last.card); ctx.fillStyle = '#e0f2f1'; rr(px + 14, py + 288, pw - 28, 50, 10); ctx.fill(); ctx.strokeStyle = '#00897b'; ctx.lineWidth = 2; ctx.stroke(); txt(c[1], px + 38, py + 321, 24, '#000', 'center'); txt('📇 獲得防詐知識卡！', px + 60, py + 306, 12, '#00695c'); txtFit(c[2], px + 60, py + 327, pw - 90, 15, '#004d40'); }
+      else if (!s.last.ok && (m.p ? m.k : m.h)) txtFit('（答對這種信，就能收集這張防詐知識卡）', px + pw / 2, py + 324, pw - 30, 12, '#8d6e63', 'center', { weight: 'normal' });
+      let yy = py + 58; if (s.last.oops) { txtFit(s.last.oops, px + pw / 2, yy, pw - 24, 13, '#6d4c41', 'center', { weight: 'normal' }); yy += 20; }
+      txt(m.p ? '🔍 破綻在這裡：' : '👍 為什麼是正常的：', px + 16, yy + 12, 15, '#4a148c'); if (m.ai || SEC_NEW.has(m.k)) { const lb = m.ai ? '🤖 AI 新手法' : '🆕 新手法'; ctx.fillStyle = m.ai ? '#311b92' : '#00838f'; rr(px + pw - 124, yy - 6, 110, 24, 12); ctx.fill(); txt(lb, px + pw - 69, yy + 11, 12, '#fff', 'center'); } yy += 20;
       m.why.forEach(([f, t], i) => { const c = m.p ? '#e53935' : '#43a047'; ctx.fillStyle = c; circ(px + 28, yy + 14, 11); ctx.fill(); txt(String(i + 1), px + 28, yy + 19, 13, '#fff', 'center');
-        const lines = phWrap(t, pw - 64, 14); lines.forEach((ln, j) => txt(ln, px + 46, yy + 19 + j * 20, 14, '#3e2723', 'left', { weight: 'normal' })); yy += 14 + lines.length * 20; });
-      if (!G.capture) drawBtn(px + pw / 2 - 90, py + 312, 180, 44, s.i + 1 >= s.deck.length || s.bad >= PH_MAXBAD ? '看結果 ▶' : '下一封 ▶', phNext, '#5e35b1');
-      ctx.fillStyle = '#d1c4e9'; rr(px + 20, py + 362, (pw - 40) * Math.max(0, 1 - s.t / 540), 4, 2); ctx.fill();
+        const lines = phWrap(t, pw - 64, 14); lines.forEach((ln, j) => txt(ln, px + 46, yy + 19 + j * 19, 14, '#3e2723', 'left', { weight: 'normal' })); yy += 10 + lines.length * 19; });
+      if (!G.capture) drawBtn(px + pw / 2 - 90, py + 346, 180, 38, s.i + 1 >= s.deck.length || s.bad >= PH_MAXBAD ? '看結果 ▶' : '下一封 ▶', phNext, '#5e35b1');
+      ctx.fillStyle = '#d1c4e9'; rr(px + 20, py + 388, (pw - 40) * Math.max(0, 1 - s.t / 540), 4, 2); ctx.fill();
       ctx.globalAlpha = 1;
     }
   }
@@ -8359,7 +8517,7 @@ function drawPhish() {
     ctx.fillStyle = '#fffdf5'; rr(W / 2 - 300, 70, 600, 380, 18); ctx.fill(); ctx.strokeStyle = '#5e35b1'; ctx.lineWidth = 5; ctx.stroke();
     txt('🎣 釣魚信件快問快答', W / 2, 120, 30, '#5e35b1', 'center');
     txt('資安稽核鴨：「今天收件匣有 15 封信，幫我分辨哪些是釣魚信！」', W / 2, 156, 15, '#5d4037', 'center', { weight: 'normal' });
-    [['🚨', '詐騙 → 往左滑（或按左邊的紅色按鈕／← 鍵）'], ['✅', '正常 → 往右滑（或按右邊的綠色按鈕／→ 鍵）'], ['🔍', '看寄件網域、連結、附件、有沒有要密碼或要錢'], ['🦠', '答錯會跑出病毒爬滿螢幕，中毒 5 次就全公司當機'], ['🛡️', '連對 3 題，防毒軟體會幫你清掉病毒']].forEach(([ic, t], i) => { txt(ic, W / 2 - 250, 202 + i * 38, 22, '#000', 'center'); txtFit(t, W / 2 - 226, 202 + i * 38, 500, 15, '#3e2723', 'left'); });
+    [['🚨', '詐騙 → 往左滑（或按左邊的紅色按鈕／← 鍵）'], ['✅', '正常 → 往右滑（或按右邊的綠色按鈕／→ 鍵）'], ['🔍', '看寄件網域、連結、附件、有沒有要密碼或要錢'], ['🦠', '答錯會跑出病毒爬滿螢幕，中毒 5 次就全公司當機'], ['🛡️', '連對 3 題清病毒；認出詐騙手法可收集「防詐知識卡」']].forEach(([ic, t], i) => { txt(ic, W / 2 - 250, 202 + i * 38, 22, '#000', 'center'); txtFit(t, W / 2 - 226, 202 + i * 38, 500, 15, '#3e2723', 'left'); });
     if (!G.capture) drawBtn(W / 2 - 110, 384, 220, 48, '📬 打開收件匣', phStart, '#5e35b1');
   }
   if (s.res && s.t > 40) {
@@ -8370,7 +8528,7 @@ function drawPhish() {
     txt(r.grade[0], W / 2, 240, 30, '#e65100', 'center'); txtFit(r.grade[1], W / 2, 276, 520, 16, '#4e342e', 'center');
     txt(`答對 ${s.right} / ${s.i + (r.win ? 0 : 1)}　分數 ${s.score}　最長連對 ${s.best}`, W / 2, 312, 15, '#5d4037', 'center');
     txt(r.win ? (r.gain ? `🍇 葡萄 +${r.gain}（每天第一次完成）` : '（今天的葡萄已經領過了）') : '提示：先看寄件網域的「最後一段」，再看有沒有要你給密碼', W / 2, 342, 14, '#2e7d32', 'center');
-    if (META.phish && META.phish.best) txt(`最佳紀錄：答對 ${META.phish.best} 封`, W / 2, 366, 13, '#6a1b9a', 'center', { weight: 'normal' });
+    txt(`${META.phish && META.phish.best ? `最佳紀錄：答對 ${META.phish.best} 封　` : ''}📇 本輪新收集 ${s.got.length} 張防詐卡（${(META.sec || []).length} / ${SEC_CARDS.length}）`, W / 2, 368, 13, '#00695c', 'center');
     if (!G.capture) { drawBtn(W / 2 - 220, 400, 200, 44, '🔁 再來一輪', openPhish, '#5e35b1'); drawBtn(W / 2 + 20, 400, 200, 44, '◀ 小遊戲', () => { G.ph = null; openHub('games'); playSong('title'); }, '#455a64'); }
   }
 }
@@ -8378,6 +8536,108 @@ function phWrap(t, maxW, fs) {
   ctx.font = `${fs}px ${FONT}`; const out = []; let cur = '';
   for (const ch of t) { if (ctx.measureText(cur + ch).width > maxW && cur) { out.push(cur); cur = ch; } else cur += ch; }
   if (cur) out.push(cur); return out;
+}
+// ---------- 🛡️ 防詐小百科（資安知識卡） ----------
+const SEC_CARDS = [
+  ['freemail', '📮', '免費信箱冒充', '公司、政府、老闆都不會用 gmail、hotmail 寄公務信。', ''],
+  ['domain', '🔚', '網域看最後一段', 'grapetech.com.tw.track-pkg.cc 真正的主人，是最後面的 track-pkg.cc。', ''],
+  ['lookalike', '👯', '長得很像的網域', 'grapeteck、rnicrosoft（r＋n 假裝 m）、grapetech-com.tw，一個字母都要看。', ''],
+  ['atsign', '🔗', '網址裡的 @', '「好網站@壞網站」：@ 前面都是幌子，真正會連到 @ 後面。', ''],
+  ['doubleext', '📎', '雙副檔名', '資料.pdf.exe 其實是執行檔，要看「最後一個」副檔名。', ''],
+  ['macro', '📝', '叫你啟用巨集', '.docm、.xlsm 叫你按「啟用內容」，常常是惡意程式的入口。', ''],
+  ['zippw', '🗜️', '加密壓縮檔', '密碼直接寫在信裡的 zip，是為了躲過防毒掃描。', ''],
+  ['giftcard', '🎁', '點數卡詐騙', '「老闆」叫你買點數卡、刮開拍照傳給他＝經典詐騙。', ''],
+  ['bec', '💸', '變臉詐騙', '突然換匯款帳戶、要你保密、繞過財務：先打電話跟本人確認。', ''],
+  ['otp', '🔢', '驗證碼不能給', '簡訊驗證碼就像家裡鑰匙，誰來要都不能給，「客服」也一樣。', ''],
+  ['password', '🔑', '沒人會跟你要密碼', 'IT、銀行、客服都不會用 Email 或電話跟你要密碼。', ''],
+  ['urgency', '⏰', '製造急迫感', '「2 小時內失效」「24 小時內刪除」：越急，越要停下來想。', ''],
+  ['replyto', '↩️', '回覆地址被換掉', '寄件者看起來沒問題，「回覆給」卻是外部信箱，一回信就送到詐騙集團。', ''],
+  ['fakelogin', '🪪', '外部網站要公司帳密', '問卷、福利、檔案分享，只要叫你在外部網站登入公司帳號，都要小心。', ''],
+  ['smallfee', '💳', '小額費用騙卡號', '「補運費 25 元」「地址更新費」：目的是你的信用卡資料。', ''],
+  ['prize', '🏆', '天上掉下來的禮物', '中大獎、繼承遺產，卻要你先付錢或給帳號＝詐騙。', ''],
+  ['invest', '📈', '保證獲利投資群', 'AI 選股、名師帶單、保證獲利：投資沒有保證，名人推薦影片也可能是深偽。', 'ai'],
+  ['aiwriting', '🤖', 'AI 寫的完美信件', '以前看錯字就能抓詐騙，現在 AI 寫得比你還通順。要看網域和它要你做什麼。', 'ai'],
+  ['deepfake', '🎭', '深偽視訊會議', '視訊裡的老闆可能是 AI 做出來的。大額轉帳，一定要換管道確認。', 'ai'],
+  ['voiceclone', '🎙️', 'AI 複製聲音', '幾秒錄音就能模仿聲音。急著要錢就先掛掉，回撥已知的號碼。', 'ai'],
+  ['promptinj', '🧠', '騙 AI 摘要', '信裡藏白色小字指令，讓 AI 摘要講出假警告。AI 也會被騙。', 'ai'],
+  ['fakeai', '🪄', '假 AI 工具', '「免費 Pro 版」「AI 外掛」安裝檔，常常是木馬。', 'ai'],
+  ['quishing', '📷', 'QR Code 釣魚', 'QR Code 也是連結，掃之前先看跳出來的網址。', 'new'],
+  ['clickfix', '🧩', '假人機驗證', '叫你按 Win＋R 貼上指令來「證明你是人」？真的驗證不會這樣。', 'new'],
+  ['mfafatigue', '📲', 'MFA 轟炸', '一直跳出登入核准通知？不是你在登入就按「拒絕」，然後回報 IT。', 'new'],
+  ['oauth', '🧷', '授權陷阱', '看個檔案卻要讀你全部的信和檔案？不認識的 App 不要按「允許」。', 'new'],
+  ['svg', '🖼️', '圖檔附件也能釣魚', '.svg、.html 附件打開，可能是一個假的登入頁。', 'new'],
+  ['selfcheck', '☎️', '自己查、換管道確認', '不確定時，自己打開官網、打已知的電話，不要用信裡給的。', 'habit'],
+  ['intranet', '🏢', '從內網自己進去', '正常的公司通知會叫你從內網操作，不會塞一個奇怪的連結。', 'habit'],
+  ['report', '🚩', '可疑信件要回報', '看到可疑信件按「回報」給 IT，比默默刪掉更能保護大家。', 'habit'],
+  ['noaction', '✅', '正常信不會跟你要東西', '純通知、純開會：不要密碼、不要錢、不會急著叫你點。', 'habit'],
+];
+const SEC_NEW = new Set(SEC_CARDS.filter(c => c[4] === 'ai' || c[4] === 'new').map(c => c[0]));
+const SEC_TAG = { ai: ['🤖 AI 手法', '#311b92'], new: ['🆕 新手法', '#00838f'], habit: ['👍 好習慣', '#2e7d32'], '': ['📌 經典', '#6d4c41'] };
+function secCard(k) { return SEC_CARDS.find(c => c[0] === k) || ['?', '❔', '？？？', '', '']; }
+function secGet(k) {
+  META.sec = META.sec || []; if (META.sec.includes(k) || !SEC_CARDS.some(c => c[0] === k)) return false;
+  META.sec.push(k); saveMeta(); if (META.sec.length >= SEC_CARDS.length) unlock('secAll'); return true;
+}
+function openSecDex() { G.state = 'secdex'; G.stateT = 0; G.secPg = G.secPg || 0; }
+function secPage(d) { const n = Math.ceil(SEC_CARDS.length / 9); G.secPg = (G.secPg + d + n) % n; SFX.coin(); }
+function secKey(e) {
+  if (['Escape', 'Backspace'].includes(e.code)) { openHub('collect'); return; }
+  if (['ArrowLeft', 'KeyA'].includes(e.code)) secPage(-1); else if (['ArrowRight', 'KeyD'].includes(e.code)) secPage(1);
+}
+function drawSecDex() {
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#004d40'); g.addColorStop(1, '#0b1f1c'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const got = META.sec || [], n = Math.ceil(SEC_CARDS.length / 9), pg = clamp(G.secPg || 0, 0, n - 1);
+  txt(`🛡️ 防詐小百科　${got.length} / ${SEC_CARDS.length}`, W / 2, 38, 24, '#fff', 'center');
+  txt('在「🎣 釣魚信件快問快答」認出詐騙手法、或看懂正常信件，就能收集', W / 2, 60, 13, '#b2dfdb', 'center', { weight: 'normal' });
+  const cw = 300, ch = 128, gx = 12, gy = 10, x0 = (W - 3 * cw - 2 * gx) / 2;
+  SEC_CARDS.slice(pg * 9, pg * 9 + 9).forEach((c, i) => {
+    const x = x0 + (i % 3) * (cw + gx), y = 74 + Math.floor(i / 3) * (ch + gy), have = got.includes(c[0]), tag = SEC_TAG[c[4]];
+    ctx.fillStyle = have ? '#fffdf6' : 'rgba(255,255,255,.07)'; rr(x, y, cw, ch, 10); ctx.fill();
+    if (have) { ctx.fillStyle = tag[1]; ctx.fillRect(x, y + 10, 5, ch - 20); }
+    ctx.fillStyle = have ? tag[1] : 'rgba(255,255,255,.18)'; ctx.font = `bold 11px ${FONT}`; const tw = ctx.measureText(tag[0]).width + 16; rr(x + cw - tw - 8, y + 8, tw, 20, 10); ctx.fill(); txt(tag[0], x + cw - tw / 2 - 8, y + 22, 11, '#fff', 'center');
+    txt(have ? c[1] : '❔', x + 30, y + 40, 26, '#000', 'center');
+    txtFit(have ? c[2] : '？？？', x + 52, y + 34, cw - tw - 70, 16, have ? '#1b1b1b' : 'rgba(255,255,255,.5)');
+    if (have) phWrap(c[3], cw - 30, 13).slice(0, 4).forEach((ln, j) => txt(ln, x + 16, y + 66 + j * 19, 13, '#4e342e', 'left', { weight: 'normal' }));
+    else txt('還沒遇到這種手法', x + 16, y + 74, 13, 'rgba(255,255,255,.35)', 'left', { weight: 'normal' });
+  });
+  for (let i = 0; i < n; i++) { ctx.fillStyle = i === pg ? '#80cbc4' : 'rgba(255,255,255,.25)'; circ(W / 2 - (n - 1) * 9 + i * 18, 496, 5); ctx.fill(); }
+  drawBtn(x0, H - 46, 120, 36, '◀ 上一頁', () => secPage(-1), '#00695c'); drawBtn(x0 + 3 * cw + 2 * gx - 120, H - 46, 120, 36, '下一頁 ▶', () => secPage(1), '#00695c');
+  drawBtn(W / 2 - 80, H - 40, 160, 34, '◀ 收藏冊', () => openHub('collect'), '#455a64');
+}
+// ---------- 📚 社畜冷知識（勞基法）＋ 👀 護眼小提醒 ----------
+const LABOR_TIPS = [
+  '平日加班費：前 2 小時至少 1.34 倍，再 2 小時至少 1.67 倍。（勞基法 §24）',
+  '正常工時加上加班，一天合計最多 12 小時。（勞基法 §32）',
+  '每月加班上限 46 小時；經工會或勞資會議同意可到 54 小時，但每 3 個月不能超過 138 小時。（§32）',
+  '休息日上班：前 2 小時至少 1.34 倍，之後至少 1.67 倍。（勞基法 §24）',
+  '國定假日叫你上班，當天工資要加倍發給你。（勞基法 §39）',
+  '連續工作 4 小時，至少要有 30 分鐘休息。（勞基法 §35）',
+  '每 7 天至少要有 1 天例假、1 天休息日，也就是「一例一休」。（勞基法 §36）',
+  '特休：滿半年 3 天、滿 1 年 7 天、滿 2 年 10 天、滿 3 年 14 天、滿 5 年 15 天。（勞基法 §38）',
+  '特休沒休完，年度結束時，雇主要把沒休的天數折算成工資發給你。（勞基法 §38）',
+  '2026 年基本工資：月薪 29,500 元、時薪 196 元。',
+  '2026 年新制：一年病假 10 天以內，雇主不能因此給你考績、扣獎金等不利處分。',
+  '2026 年新制：請病假扣全勤獎金要「按比例」，不能請 1 天就整筆扣光。',
+  '依勞動部指導原則：下班後老闆用 LINE 交辦工作，你實際處理的時間也算工作時間。',
+  '發薪水時，雇主要給你工資明細，列出各項金額和扣款。（勞基法 §23）',
+  '加班要換補休，必須你本人同意；補休期限到了沒休完，要折算成加班費。（勞基法 §32-1）',
+  '每月可以請 1 天生理假，雇主不能因此扣全勤獎金。（性別平等工作法）',
+  '「責任制」（勞基法 §84-1）只限勞動部核定的特定工作，不是公司說了算。',
+  '被資遣的預告期：做滿 3 個月預告 10 天、滿 1 年 20 天、滿 3 年 30 天。（勞基法 §16）',
+];
+const EYE_TIPS = [
+  '👀 護眼 20-20-20：每看螢幕 20 分鐘，就看 6 公尺外的地方 20 秒。',
+  '🚶 久坐小提醒：每 30～60 分鐘起來走一走、伸展一下。',
+  '😑 盯著螢幕時眨眼會變少，記得多眨眨眼，眼睛比較不乾。',
+  '🖥️ 螢幕上緣跟眼睛差不多高、距離大約一個手臂長，脖子比較不痠。',
+  '💧 專心摸魚（或工作）時很容易忘記喝水，現在喝一口吧。',
+];
+function laborTip(key) { if (G.tipKey !== key) { G.tipKey = key; G.tipN = ((G.tipN == null ? Math.floor(Math.random() * LABOR_TIPS.length) : G.tipN) + 1) % LABOR_TIPS.length; } return LABOR_TIPS[G.tipN]; }
+function drawLaborTip(key, y = 474) {
+  const t = laborTip(key), lines = phWrap(t, 600, 14), h = 20 + lines.length * 20, x = W / 2 - 360;
+  ctx.fillStyle = 'rgba(255,248,225,.95)'; rr(x, y, 720, h, 12); ctx.fill(); ctx.strokeStyle = '#ffb300'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#ff8f00'; rr(x + 10, y + h / 2 - 12, 92, 24, 12); ctx.fill(); txt('📚 社畜冷知識', x + 56, y + h / 2 + 5, 12, '#fff', 'center');
+  lines.forEach((ln, i) => txt(ln, x + 112, y + 24 + i * 20, 14, '#4e342e', 'left', { weight: 'normal' }));
 }
 
 // ---------- 每日關卡流程 ----------
@@ -8488,6 +8748,7 @@ function drawDayClear() {
   ];
   lines.forEach((l, i) => txtFit(l, W / 2, 346 + i * 26, 540, 15, i === 3 && d.skins.length ? '#e65100' : '#4e342e', 'center'));
   if (G.stateT > 40 && FC % 70 < 50) txt(isTouch ? '點一下回出勤卡' : '按 Enter 回出勤卡', W / 2, 454, 15, '#8d6e63', 'center');
+  drawLaborTip('d' + d.n, 478);
 }
 function drawCardsPage() {
   const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#263238'); g.addColorStop(1, '#101820'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
