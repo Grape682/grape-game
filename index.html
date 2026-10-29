@@ -453,6 +453,7 @@ window.addEventListener('keydown', e => {
   if (G.state === 'mengpo') { mengpoKey(e); return; }
   if (G.state === 'hub') { if (!e.repeat) hubKey(e); if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'elevator') { if (['Space', 'Enter'].includes(e.code) || /^Digit/.test(e.code)) e.preventDefault(); if (!e.repeat) elevatorKey(e); if (e.code === 'KeyM') toggleMute(); return; }
+  if (G.state === 'handbook') { if (!e.repeat) handbookKey(e); if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'secdex') { if (!e.repeat) secKey(e); if (e.code === 'KeyM') toggleMute(); return; }
   if (G.state === 'stare') { if (['Space', 'Enter', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault(); stareKey(e, true); return; }
   if (G.state === 'phish') { if (['Space', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault(); phishKey(e); return; }
@@ -526,7 +527,7 @@ cvs.addEventListener('pointerdown', e => {
   if (G.state === 'golf') { golfPress(); return; }
   if (G.state === 'stare') { if (G.st && G.st.phase === 'play') { stHold(true); ptrDown = true; } return; }
   if (G.state === 'phish') { phPointer('down', p); ptrDown = true; try { cvs.setPointerCapture(e.pointerId); } catch (_) {} return; }
-  if (G.state === 'shop' || G.state === 'calendar' || G.state === 'cards' || G.state === 'skins' || G.state === 'mengpo' || G.state === 'elevator' || G.state === 'hub' || G.state === 'secdex') return;
+  if (G.state === 'shop' || G.state === 'calendar' || G.state === 'cards' || G.state === 'skins' || G.state === 'mengpo' || G.state === 'elevator' || G.state === 'hub' || G.state === 'secdex' || G.state === 'handbook') return;
   if (G.state === 'play' && G.bsod && !G.paused) { bsodPress(); return; }
   if (G.state !== 'play') confirmAct(); else if (G.paused) togglePause();
 });
@@ -643,6 +644,7 @@ const ACH = [
   ['stare', '🕵️', '木頭人冠軍', '老闆轉頭就停：零警告撐到 18:00'],
   ['phish', '🎣', '資安守門員', '釣魚信件 15 封全部答對'],
   ['secAll', '📚', '防詐小百科', '收集全部的防詐知識卡'],
+  ['hbAll', '📘', '員工手冊背熟了', '員工手冊每一頁都解鎖'],
 ];
 const ACH_KEY = 'grapeOfficeAch_v1';
 let achGot = new Set();
@@ -1165,6 +1167,7 @@ function loadLevel(idx, useCP) {
   if (LV.secret) LV.sub = LV.mission = fridayLine();
   enemies = []; items = []; props = []; projs = []; parts = []; pops = []; bumps = []; objs = []; boss = null;
   LV.ents.forEach(spawnEnt);
+  if (useCP && boss && G.bossKeep && G.bossKeep.lv === LV.name && G.bossKeep.kind === boss.kind) boss.hp = clamp(G.bossKeep.hp, 1, boss.maxHp);
   G.meet = null; placeOddCoworkers(idx);                   // 奇葩同事
   const sx = (useCP && G.cp != null) ? G.cp : LV.spawn;
   P = newPlayer(sx);
@@ -1175,7 +1178,7 @@ function loadLevel(idx, useCP) {
   G.budget = 1; G.viewB = 1; G.bsod = null; G.ads = []; G.adQ = 0; G.stage = null; G.ink = [];
   G.hitstop = 0; G.revWarn = 0; G.lvSpikes = []; G.doorCD = 0; G.doorFade = 0; G.rescueT = 0; G.downTap = 0; G.amnesiaT = 0; G.broN = 0; G.bro = null; G.cine = null;
   G.tempo = (LV.deadline && G.clock >= LV.deadline - 30 && G.clock < LV.deadline) ? 0.85 : 1;
-  G.arena = false; G.toast = null; G.shake = 0; G.drainAcc = 0; G.paused = false; G.flipT = 0; G.flash = 0; G.puddle = null;
+  G.arena = false; G.arenaT = 0; G.bestX = 0; G.stuckT = 0; G.thought = null; G.pearT = 0; G.lowT = 0; G.rageT = 0; G.toast = null; G.shake = 0; G.drainAcc = 0; G.paused = false; G.flipT = 0; G.flash = 0; G.puddle = null;
   btnPause.textContent = '⏸';
   updateCam(true);
   playSong(LV.song);
@@ -1207,7 +1210,7 @@ function loadRun(i) {
   toast(`💾 讀取存檔：第 ${i + 1} 天早上`, 160);
 }
 function startLevel(i) {
-  writeSave(i);
+  writeSave(i); G.bossKeep = null;
   G.cp = null; G.clock = LEVELS[i].clock || 540; G.clockAcc = 0; G.levelScore0 = G.score; G.levelDamage = 0;
   G.warned = 0; G.stageDone = false; G.revN = 0;
   loadLevel(i, false);
@@ -1228,6 +1231,7 @@ function fridayLine() {
        : `系統偵測：今天是星期${WEEK[d]}…算了，就當作是週五吧`;
 }
 function enterSecret() {
+  hbGet('secret');
   if (G.state !== 'play') return;
   G.secretFrom = { idx: G.levelIdx, clock: G.clock };
   G.secretDone = true; G.cp = null; G.levelScore0 = G.score; unlock('friday');
@@ -1412,6 +1416,8 @@ function step() {
 }
 
 function update() {
+  if (G.feel && --G.feel.t <= 0) G.feel = null;
+  hbStep(); hbStuckStep();
   if (G.toiletT > 0) { updateToilet(); return; }          // 帶薪拉屎：全世界時間暫停
   if (G.bsod) { updateBsod(); return; }                   // 藍屏：狂按鍵重開機
   if (G.stage) { updateStage(); return; }                 // 被拉上台表演
@@ -1434,7 +1440,7 @@ function update() {
     if (e === FLIP_WIND) flipImpact();
   }
   if (G.fx.upd > 0 && --G.fx.upd === 0) toast('✅ 更新完成：已為你新增 3 個用不到的功能');
-  if (G.revWarn > 0 && --G.revWarn === 0) { G.fx.reverse = G.revDur; SFX.change(); G.shake = 5; }
+  if (G.revWarn > 0 && --G.revWarn === 0) { hbGet('reverse'); G.fx.reverse = G.revDur; SFX.change(); G.shake = 5; }
   updateLvSpikes();
   for (const k of ['lowGrav', 'sleep', 'slow', 'reverse', 'ink', 'drunk']) if (G.fx[k] > 0) G.fx[k]--;
   if (G.coffeeTimes.length && FC - G.coffeeTimes[0] > 600) G.coffeeTimes.shift();
@@ -1608,6 +1614,8 @@ function hurt(amount, cause, srcX, label) {
   if (G.items.headphones && cause === 'email') { amount = Math.round(amount / 2); label = label || '🎧 降噪：傷害減半'; }
   if (G.items.chair) amount = Math.round(amount * 0.7);
   if (fortune() === 'cool') amount = Math.round(amount * 0.7);
+  if (G.arena) amount = Math.round(amount * 0.75);
+  if (cause === 'spike') { hbGet('deadline'); hbFail('spike:' + LV.name); }
   P.sanity -= amount; P.inv = 90; addRage(22); buzz(70); G.hitstop = Math.max(G.hitstop, 4); G.hurtT = FC + 12;
   P.vx = (P.x + P.w / 2 < srcX) ? -4.5 : 4.5; P.vy = Math.min(P.vy, -5);
   SFX.hurt(); G.shake = 8;
@@ -1618,6 +1626,7 @@ function hurt(amount, cause, srcX, label) {
 function die(cause) {
   if (G.state !== 'play') return;
   if (G.items.spare) { useSpare(cause); return; }
+  if (G.arena && boss && boss.state !== 'dead') { hbFail('boss:' + boss.kind); G.bossKeep = { lv: LV.name, kind: boss.kind, hp: boss.hp }; }
   G.state = 'dead'; G.stateT = 0; if (!G.daily) G.lives--; G.deaths++; G.clock += 30;
   G.deathCause = cause; G.deathMsg = pick(TXT.death[cause] || TXT.death.sanity);
   G.deathStyle = cause === 'pit' ? 'pit' : cause === 'spike' ? 'juice' : 'raisin';
@@ -1662,12 +1671,12 @@ function afterDeath() {
 function addRage(n) {
   if (G.rage >= 100 || G.state !== 'play') return;
   G.rage = Math.min(100, G.rage + n * (G.items.ball ? 1.5 : 1));
-  if (G.rage >= 100) { SFX.rageFull(); popup(P.x + P.w / 2, P.y - 40, isTouch ? '🔥 怒氣滿了！按「翻桌」' : '🔥 怒氣滿了！按 X 翻桌', '#ff8a80', 16); }
+  if (G.rage >= 100) { hbGet('rage'); SFX.rageFull(); popup(P.x + P.w / 2, P.y - 40, isTouch ? '🔥 怒氣滿了！按「翻桌」' : '🔥 怒氣滿了！按 X 翻桌', '#ff8a80', 16); }
 }
 function tryFlip() {
   if (G.state !== 'play' || G.paused || G.rage < 100 || G.flipT > 0 || G.toiletT > 0 || G.stage || G.bsod) return false;
   if (G.patrol && G.patrol.phase === 'watch') { popup(P.x + P.w / 2, P.y - 30, '老闆在看！先忍住！', '#ff8a80', 15); return false; }
-  G.rage = 0; G.flipT = FLIP_LEN; G.stats.flips++;
+  G.rage = 0; G.flipT = FLIP_LEN; G.stats.flips++; heroFeel('angry', 80); hbGet('flip');
   unlock('firstFlip'); if (G.stats.flips >= 3) unlock('flipKing');
   P.vx = 0; SFX.flipWind();
   return true;
@@ -1739,7 +1748,7 @@ function damageObj(o) {
     SFX.bump(); G.shake = Math.max(G.shake, 4);
     burst(o.x + o.w / 2, o.y + 10, '#fff', 5, 2);
     popup(o.x + o.w / 2, o.y - 8, pick(['哐！', '再一下！', '快壞了！']), '#fff', 14);
-    if (o.kind === 'vending') items.push({ type: 'coffee', w: 20, h: 22, x: o.x + 8, y: o.y + 30, vx: rand(-2, 2), vy: -5, grav: true, t: 0 });
+    if (o.kind === 'vending') { items.push({ type: 'coffee', w: 20, h: 22, x: o.x + 8, y: o.y + 30, vx: rand(-2, 2), vy: -5, grav: true, t: 0 }); hbGet('vending'); }
     return;
   }
   breakObj(o);
@@ -1747,7 +1756,7 @@ function damageObj(o) {
 function breakObj(o, how) {
   if (o.broken) return;
   const O = OBJ[o.kind], cx = o.x + o.w / 2;
-  o.broken = true; o.hp = 0;
+  o.broken = true; o.hp = 0; hbGet(o.kind === 'vending' ? 'vending' : 'break');
   G.stats.damage += O.cost; G.levelDamage += O.cost; G.stats.broken++;
   if (G.stats.damage >= 300000) unlock('destroyer');
   G.score += Math.round(O.cost / 100);
@@ -1768,6 +1777,7 @@ function hitBlock(tx, ty) {
   const t = tileAt(tx, ty);
   if (t === 3 || t === 9) {
     setTile(tx, ty, 4); bumps.push({ tx, ty, t: 10 }); SFX.block(); G.hitstop = 2;
+    hbGet(t === 9 ? 'hidden' : 'qbox');
     if (t === 9) { SFX.secret(); popup(tx * T + T / 2, ty * T - 44, '隱藏需求出現了！', '#80deea', 14); }
     const c = LV.content[tx + ',' + ty] || 'g';
     if (c === 'c') {
@@ -1804,9 +1814,10 @@ function addGrape(n = 1, quiet) {
   if (fortune() === 'payday') n *= 2;
   for (let i = 0; i < n; i++) {
     G.grapes++; G.grapesAll++; G.score += 10;
-    if (G.grapesAll % 50 === 0) { G.lives++; SFX.oneup(); popup(P.x + P.w / 2, P.y - 30, '+1 天年假！🌴', '#b9f6ca', 16); }
+    if (G.grapesAll % 50 === 0) { hbGet('grape50'); G.lives++; SFX.oneup(); popup(P.x + P.w / 2, P.y - 30, '+1 天年假！🌴', '#b9f6ca', 16); }
   }
   if (!quiet) SFX.grape();
+  heroFeel('happy', 45);
   if (G.grapesAll >= 120) unlock('grapes');
 }
 
@@ -1919,7 +1930,7 @@ function throwTask(e, dx) {
 function addTask(label, srcX) {
   if (P.star > 0) { popup(P.x + P.w / 2, P.y - 14, '你都要離職了還塞？', '#fff59d', 14); return; }
   if (G.items.sticker && Math.random() < 0.5) { popup(P.x + P.w / 2, P.y - 14, '😎 已讀不回（貼紙生效）', '#b9f6ca', 14); SFX.refuse(); return; }
-  P.sanity -= G.items.chair ? 6 : 8; P.loadT = 240; SFX.task(); addRage(14); G.stats.tasks++; if (G.stats.tasks >= 10) unlock('goodGuy');
+  P.sanity -= G.items.chair ? 6 : 8; P.loadT = 240; SFX.task(); addRage(14); heroFeel('tired', 120); hbGet('task'); G.stats.tasks++; if (G.stats.tasks >= 10) unlock('goodGuy');
   if (P.load < 3) P.load++;
   popup(P.x + P.w / 2, P.y - 14, '+1 待辦：' + label.replace('📁 ', ''), '#ffcc80', 14);
   if (P.load === 3) popup(P.x + P.w / 2, P.y - 36, '工作量爆表！走不動了…', '#ff8a80', 13);
@@ -1930,7 +1941,7 @@ function refuseCoworker(e, line) {
   e.alive = false; e.how = 'leave'; e.dieT = 0;
   e.face = (e.x + e.w / 2 > P.x + P.w / 2) ? 1 : -1; e.vx = e.face * 2.6;
   e.say = { text: line || pick(TXT.refuse), t: 120 };
-  G.score += 200; SFX.refuse(); G.stats.refuse++; getCard('cowork'); if (G.stats.refuse >= 5) unlock('sayNo');
+  G.score += 200; SFX.refuse(); heroFeel('smug', 80); hbGet('refuse'); G.stats.refuse++; getCard('cowork'); if (G.stats.refuse >= 5) unlock('sayNo');
   popup(e.x + e.w / 2, e.y - 34, '學會說不！+200', '#b9f6ca', 15);
   burst(e.x + e.w / 2, e.y, '#ffe082', 8, 2);
 }
@@ -2005,7 +2016,7 @@ function impact(x, y, big) {
 }
 function stompEnemy(e) {
   if (e.type === 'odd') { addRage(4); oddStomp(e); return; }
-  buzz(15);
+  buzz(15); hbGet('stomp'); heroFeel('proud', 34);
   P.combo++; addRage(4); G.stats.stomps++; broCount();
   const pts = 100 * P.combo; G.score += pts;
   P.vy = keys.jump ? -11 : -7.5;
@@ -2048,8 +2059,22 @@ function throwPaper() {
                text: pick(['密碼過期', 'MFA', '釣魚信', 'USB 禁用', '缺失單', '請改密碼']), color: '#d32f2f', life: 200, cause: 'boss' });
   SFX.throw();
 }
+function arenaCoffee() {                                         // 頭目戰：精神值低時，茶水間阿姨從天花板丟咖啡進來
+  if (!G.arena || !boss || boss.state === 'dead' || boss.state === 'intro' || G.state !== 'play') return;
+  G.arenaT = (G.arenaT || 0) + 1;
+  const need = P.sanity < 35 ? 200 : P.sanity < 70 ? 420 : 1e9;
+  if (items.some(it => it.type === 'coffee') || G.arenaT < need) return;
+  G.arenaT = 0; G.arenaCups = (G.arenaCups || 0) + 1;
+  const A = LV.arena, lo = Math.max(cam.x + 340, (A.x0 + 1) * T), hi = cam.x + W - 120;
+  let x = clamp(P.x + (Math.random() < 0.5 ? -1 : 1) * rand(70, 170), lo, hi);
+  items.push({ type: 'coffee', w: 20, h: 22, x, y: -24, vx: 0, vy: 0, grav: true, t: 0, chute: true });
+  SFX.event();
+  if (!G.arenaTip) { G.arenaTip = true; toast('☕ 茶水間阿姨從天花板丟咖啡進來了！精神值低的時候記得去接（+35）', 260); }
+  else popup(x + 10, 60, '☕ 咖啡空投！', '#ffe0b2', 15);
+}
 function updateBoss() {
   if (!boss) return;
+  arenaCoffee();
   if (boss.say && boss.say !== boss._ls) { boss._ls = boss.say; if (G.arena) chatter(bossVoice(boss.kind), 4); }
   if (boss.broStunT > 0) boss.broStunT--;
   if (boss.phase2 && !boss.p2song && G.arena && boss.state !== 'dead' && !(P.star > 0)) { boss.p2song = true; queueSong(bossSong()); }
@@ -2153,7 +2178,10 @@ function checkArena() {
   if (P.x > A.trig * T) {
     G.arena = true;
     for (let y = 0; y <= 14; y++) setTile(A.wallX, y, 8);
-    boss.active = true; bossState('intro', 170);
+    boss.active = true; bossState('intro', 170); hbGet('boss');
+    G.cp = A.trig; P.sanity = Math.max(P.sanity, 80);
+    const kept = G.bossKeep && G.bossKeep.lv === LV.name && G.bossKeep.kind === boss.kind && boss.hp < boss.maxHp;
+    G.rtMsg = kept ? `🩹 頭目上次被你打的傷還在（剩 ${boss.hp}/${boss.maxHp}）・💾 已在會議室門口存檔・☕ 精神補到 80%` : '💾 會議室門口自動存檔・☕ 茶水間阿姨塞給你一杯咖啡（精神補到 80%）'; G.rtT = FC + 290;
     if (!(P.star > 0)) playSong(boss.song);
     SFX.boss(); G.shake = 10;
     const I = BOSS_INTRO[boss.kind] || BOSS_INTRO.duck;
@@ -2409,7 +2437,7 @@ function updateSpot(p) {
   p.x = p.a * T + span * (0.5 + 0.5 * Math.sin(p.t * 0.012 + p.ph));
   if (p.cd > 0) { p.cd--; p.hold = 0; return; }
   const inBeam = Math.abs(P.x + P.w / 2 - p.x) < 34 && P.y + P.h > 9 * T && !underTable() && !G.stage && !(G.flipT > 0);   // 燈架（第 8 列以上）照不到
-  if (inBeam && G.state === 'play') {
+  if (inBeam && G.state === 'play') { hbGet('spot');
     if (++p.hold === 1) SFX.adPop();
     if (p.hold >= 50) {
       p.hold = 0; p.cd = 600;
@@ -2458,7 +2486,7 @@ function updateStage() {
 }
 
 // ---------- 突發狀況：藍屏 ----------
-function startBsod() { G.bsod = { prog: 0, t: 0, presses: 0, done: 0 }; keys.left = keys.right = keys.down = false; P.vx = 0; SFX.bsod(); G.stats.bsods++; }
+function startBsod() { hbGet('bsod'); G.bsod = { prog: 0, t: 0, presses: 0, done: 0 }; keys.left = keys.right = keys.down = false; P.vx = 0; SFX.bsod(); G.stats.bsods++; }
 function bsodPress() { const b = G.bsod; if (!b || b.done) return; b.presses++; b.prog = Math.min(100, b.prog + rand(4, 7)); SFX.key(); }
 function updateBsod() {
   const b = G.bsod; b.t++;
@@ -2490,7 +2518,7 @@ function startAds(n) {
 function spawnAd() {
   if (G.ads.length >= 5) return;
   const a = pick(ADS), w = 300, h = 150;
-  G.ads.push({ icon: a[0], title: a[1], body: a[2], w, h, x: rand(30, W - w - 30), y: rand(110, H - h - 40), t: 0, life: 720, fake: G.adForceFake || Math.random() < 0.4, moved: false, wob: Math.random() * 6 });
+  hbGet('ads'); G.ads.push({ icon: a[0], title: a[1], body: a[2], w, h, x: rand(30, W - w - 30), y: rand(110, H - h - 40), t: 0, life: 720, fake: G.adForceFake || Math.random() < 0.4, moved: false, wob: Math.random() * 6 });
   G.adForceFake = false;
   SFX.adPop();
 }
@@ -2534,7 +2562,7 @@ function buyItem(i) {
   if (G.grapes < it.price) { s.msg = `葡萄不夠…還差 ${it.price - G.grapes} 顆（跟你的薪水一樣）`; SFX.nope(); s.shake = 12; return; }
   G.grapes -= it.price; G.grapesSpent += it.price; G.shopBought++;
   if (it.id === 'vacation') G.lives++; else G.items[it.id] = true;
-  s.msg = `購買成功：${it.icon} ${it.name}！`; s.flash = 20; SFX.cash(); SFX.coffee();
+  hbGet('shop'); s.msg = `購買成功：${it.icon} ${it.name}！`; s.flash = 20; SFX.cash(); SFX.coffee();
   if (G.shopBought >= 5) unlock('shop');
 }
 function leaveShop() { const n = G.shop.next; G.shop = null; startLevel(n); }
@@ -2714,7 +2742,7 @@ function updateItems() {
     it.t = (it.t || 0) + 1;
     if (it.grav) {
       const v = it.vx;
-      it.vy = Math.min(it.vy + 0.4, 8);
+      it.vy = Math.min(it.vy + 0.4, it.chute ? 1.7 : 8);
       moveBody(it, true);
       if (it.hitWall) it.vx = -v;
       if (it.type === 'letter' && it.onGround) it.vy = -6.5;
@@ -2733,7 +2761,7 @@ function collect(it) {
   const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
   if (it.type === 'grape') { addGrape(); burst(cx, cy, '#b388ff', 6, 2); popup(cx, cy - 10, '+10', '#e1bee7', 12); }
   else if (it.type === 'letter') {
-    P.star = 480; P.load = 0; G.score += 1000; SFX.letter(); playSong('quit');
+    hbGet('letter'); P.star = 480; P.load = 0; G.score += 1000; SFX.letter(); playSong('quit');
     if (it.key && !G.stats.letters.has(it.key)) {
       G.stats.letters.add(it.key);
       popup(cx, cy - 34, `📄 離職信 ${G.stats.letters.size}/${LETTER_TOTAL}`, '#fff59d', 15);
@@ -2752,7 +2780,7 @@ function collect(it) {
     toast('✈️ 主管出差中！全公司開始摸魚 10 秒（怪物不會攻擊）', 240);
     burst(cx, cy, '#81d4fa', 12, 3);
   } else {
-    G.coffees++; P.sanity = Math.min(100, P.sanity + 35); G.score += 50; SFX.coffee();
+    G.coffees++; P.sanity = Math.min(100, P.sanity + 35); G.score += 50; SFX.coffee(); heroFeel('joy', 90); hbGet('coffee');
     burst(cx, cy, '#8d6e63', 10, 3);
     popup(cx, cy - 14, pick(TXT.coffee).replace('N', G.coffees), '#ffe0b2', 14);
     G.coffeeTimes.push(FC);
@@ -2760,6 +2788,7 @@ function collect(it) {
   }
 }
 function startHyper(msg) {
+  hbGet('hyper');
   G.fx.hyper = 420; G.fx.slow = 0; P.sanity = Math.min(100, P.sanity + 50); G.stats.hyper++; unlock('hyper');
   SFX.hyper(); toast(msg, 220);
 }
@@ -2768,6 +2797,7 @@ function doorOpen(d) { return d.hx == null || tileAt(d.hx, d.hy) !== 9; }
 function roomAt(x) { const tx = x / T; return LV.rooms && LV.rooms.find(r => tx >= r[0] && tx < r[1] + 1) || null; }
 function inRoom() { return !!roomAt(P.x + P.w / 2); }
 function useDoor(d) {
+  hbGet('door');
   const q = props.find(o => o.type === 'door' && o.id === d.to); if (!q) return;
   P.x = q.x + q.w / 2 - P.w / 2; P.y = q.y + q.h - P.h; P.vx = 0; P.vy = 0; P.safe = { x: P.x, y: P.y };
   keys.down = false; G.doorCD = 40; G.doorFade = 20; projs = [];
@@ -2790,18 +2820,18 @@ function updateProps() {
     if (p.type === 'exit' && !p.locked) { if (P.x + P.w / 2 > p.x + 12 && !inRoom()) startClockout(); continue; }
     if (!overlap(P, p)) continue;
     if (p.type === 'check' && !p.on) {
-      p.on = true; G.cp = p.tx; SFX.check(); P.sanity = Math.min(100, P.sanity + 10);
+      p.on = true; hbGet('check'); G.cp = p.tx; SFX.check(); P.sanity = Math.min(100, P.sanity + 10);
       if (P.load > 0) { P.load = 0; toast('💾 已存檔，順便把待辦都推給了新來的實習生'); }
       else toast('💾 已在茶水間存檔（順便摸魚 30 秒）');
       burst(p.x + p.w / 2, p.y, '#81d4fa', 12, 3);
     } else if (p.type === 'exit') {
       if (G.exitWarn <= 0) { toast(({ parrot: '🔒 需求還沒定案，禁止下班！', client: '🔒 合約還沒簽，禁止下班！', octo: '🔒 表單還沒填完，禁止下班！' })[boss && boss.kind] || '🔒 稽核未完成，禁止下班！'); G.exitWarn = 200; }
     } else if (p.type === 'nap') {
-      if (!p.used && P.onGround && (keys.down || G.downTap > 0) && Math.abs((P.x + P.w / 2) - (p.x + p.w / 2)) < 18) { p.used = true; keys.down = false; G.downTap = 0; openBubble('level'); }
+      if (!p.used && P.onGround && (keys.down || G.downTap > 0) && Math.abs((P.x + P.w / 2) - (p.x + p.w / 2)) < 18) { p.used = true; hbGet('nap'); keys.down = false; G.downTap = 0; openBubble('level'); }
       else if (!p.used && G.exitWarn <= 0) { popup(p.x + p.w / 2, p.y - 30, '💤 按 ↓ 進午休室戳泡泡紙', '#e1bee7', 13); G.exitWarn = 150; }
     } else if (p.type === 'toilet') {
       if (!p.used && P.onGround && (keys.down || G.downTap > 0) && Math.abs((P.x + P.w / 2) - (p.x + p.w / 2)) < 18) {
-        p.used = true; G.downTap = 0; G.toiletT = 330; G.toiletPay = 0; P.vx = 0; G.toiletProp = p;
+        p.used = true; hbGet('toilet'); G.downTap = 0; G.toiletT = 330; G.toiletPay = 0; P.vx = 0; G.toiletProp = p;
         SFX.check(); toast('🚽 帶薪拉屎中…全世界暫停，薪水照領', 200);
       } else if (!p.used && G.exitWarn <= 0) { popup(p.x + p.w / 2, p.y - 30, '🚽 按 ↓ 進去帶薪拉屎', '#b3e5fc', 13); G.exitWarn = 150; }
     } else if (p.type === 'door') {
@@ -2887,7 +2917,7 @@ function behindPlant() { return objs.some(o => o.kind === 'plant' && !o.broken &
 function looksBusy() { return (P.typing) || behindPlant(); }
 function startPatrol(twist) {
   if (G.patrol) return;
-  G.patrol = { phase: 'warn', t: 110, twist: !!twist };
+  G.patrol = { phase: 'warn', t: 110, twist: !!twist }; hbGet('patrol');
   SFX.steps();
   toast(G.patrol.twist ? '👀 老闆又來巡視了（這次他看起來特別多疑）' : '👀 榴槤老闆要來巡視了！按住 ↓ 假裝打字，或躲到盆栽後面！', 260);
 }
@@ -2902,12 +2932,12 @@ function updatePatrol() {
     pt.busy = looksBusy();
     if (pt.max - pt.t > (pt.grace || 20) && !pt.busy) {    // 一開始是老闆轉頭的時間
       pt.phase = 'caught'; pt.t = 130; pt.say = pt.back ? '我就知道！手機只是藉口！' : pick(TXT.patrolCaught);
-      G.stats.caught++; SFX.caught(); G.shake = 10; addRage(25); unlock('caught');
+      G.stats.caught++; SFX.caught(); G.shake = 10; addRage(25); unlock('caught'); heroFeel('tired', 240); hbGet('caught'); hbFail('caught:' + LV.name);
       P.sanity -= 18; G.clock += 20; toast('🚨 被抓到摸魚！被叫進會議室聊了 20 分鐘（精神 -18）', 220);
       if (P.sanity <= 0) { P.sanity = 0; die('caught'); }
     } else if (pt.t <= 0) {
       pt.phase = 'leave'; pt.t = 70; pt.say = pick(TXT.patrolOk);
-      G.stats.dodged++; G.score += 300; SFX.phew(); if (G.stats.dodged >= 3 && !G.stats.caught) unlock('fish');
+      G.stats.dodged++; G.score += 300; SFX.phew(); heroFeel('smug', 140); if (behindPlant()) hbGet('plant'); if (G.stats.dodged >= 3 && !G.stats.caught) unlock('fish');
       popup(P.x + P.w / 2, P.y - 30, '成功騙過老闆！+300', '#b9f6ca', 16);
       if (pt.back) { unlock('twist'); G.score += 700; popup(P.x + P.w / 2, P.y - 50, '識破回馬槍！+700', '#ffd54f', 16); pt.say = '…嗯，看來你是真的很認真'; }
     }
@@ -2916,7 +2946,7 @@ function updatePatrol() {
   } else if (pt.phase === 'return') {                      // 回馬槍：老闆突然又探頭回來
     if (pt.t <= 0) { pt.phase = 'watch'; pt.t = 130; pt.max = 130; pt.grace = 12; SFX.event(); G.toast = null; }
   } else if (pt.t <= 0) {
-    if (pt.twist && !pt.back) { pt.back = true; pt.phase = 'return'; pt.t = 26; pt.say = '…啊，我手機忘了拿'; SFX.steps(); SFX.steps(); }
+    if (pt.twist && !pt.back) { pt.back = true; hbGet('twist'); pt.phase = 'return'; pt.t = 26; pt.say = '…啊，我手機忘了拿'; SFX.steps(); SFX.steps(); }
     else G.patrol = null;
   }
 }
@@ -3290,6 +3320,66 @@ function drawTiles() {
 }
 
 // ---------- 角色：阿葡（葡萄社畜） ----------
+function heroFace(md, x, low) {
+  const PI = Math.PI, blink = (FC + Math.floor(x)) % 190 < 5, dark = '#1a1a1a', line = (w = 1.5, c = '#2b1d3a') => { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); };
+  const bags = (a = 0.75, w = 1.4) => { ctx.strokeStyle = `rgba(58,26,85,${a})`; ctx.lineWidth = w; ctx.beginPath(); ctx.arc(2, -19, 4.2, 0.25 * PI, 0.75 * PI); ctx.stroke(); ctx.beginPath(); ctx.arc(9, -19, 4.2, 0.25 * PI, 0.75 * PI); ctx.stroke(); };
+  const eyes = (pup = 1.7, ox = 1, oy = 0.5, rx = 3.2, ry = 3.8) => { ctx.fillStyle = '#fff'; ell(2, -20, rx, ry); ctx.fill(); ell(9, -20, rx, ry); ctx.fill(); ctx.fillStyle = dark; circ(2 + ox, -20 + oy, pup); ctx.fill(); circ(9 + ox, -20 + oy, pup); ctx.fill();
+    if (pup > 1.2) { ctx.fillStyle = '#fff'; circ(2.6 + ox, -21 + oy, 0.6); ctx.fill(); circ(9.6 + ox, -21 + oy, 0.6); ctx.fill(); } };
+  const shut = () => { line(1.6, dark); ctx.moveTo(-0.5, -19.5); ctx.lineTo(4.5, -19.5); ctx.moveTo(6.5, -19.5); ctx.lineTo(11.5, -19.5); ctx.stroke(); };
+  const arcs = (j = 0) => { line(1.7, dark); ctx.arc(2, -18.8 + j, 2.6, 1.1 * PI, 1.9 * PI); ctx.stroke(); line(1.7, dark); ctx.arc(9, -18.8 - j, 2.6, 1.1 * PI, 1.9 * PI); ctx.stroke(); };
+  const lids = (k) => { ctx.fillStyle = '#6b2c94'; for (const ex of [2, 9]) { ctx.beginPath(); ctx.ellipse(ex, -20, 3.4, 4, 0, PI, 2 * PI); ctx.lineTo(ex + 3.4, -20 + (k - 0.5) * 7.6); ctx.lineTo(ex - 3.4, -20 + (k - 0.5) * 7.6); ctx.fill(); } line(1.4, dark); ctx.moveTo(-1.2, -20 + (k - 0.5) * 7.6); ctx.lineTo(5.2, -20 + (k - 0.5) * 7.6); ctx.moveTo(5.8, -20 + (k - 0.5) * 7.6); ctx.lineTo(12.2, -20 + (k - 0.5) * 7.6); ctx.stroke(); };
+  const brows = (l0, l1, r0, r1) => { line(1.6, '#2b1d3a'); ctx.moveTo(-0.5, l0); ctx.lineTo(4.5, l1); ctx.moveTo(6.5, r0); ctx.lineTo(11.5, r1); ctx.stroke(); };
+  const blush = (a = 0.55) => { ctx.fillStyle = `rgba(255,128,171,${a})`; ell(-1.5, -14.5, 2.6, 1.5); ctx.fill(); ell(12.5, -14.5, 2.6, 1.5); ctx.fill(); };
+  const openMouth = (r = 3, y = -13.6) => { ctx.fillStyle = '#3a1450'; ctx.beginPath(); ctx.moveTo(6 - r, y); ctx.arc(6, y, r, 0, PI); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#ff8a80'; ctx.beginPath(); ctx.arc(6, y + r * 0.62, r * 0.48, PI, 2 * PI); ctx.fill(); };
+  const teeth = (x0, y0, w, h) => { ctx.fillStyle = '#fff'; rr(x0, y0, w, h, 1); ctx.fill(); line(1.1, '#2b1d3a'); ctx.rect(x0, y0, w, h); for (let i = 1; i < 4; i++) { ctx.moveTo(x0 + i * w / 4, y0); ctx.lineTo(x0 + i * w / 4, y0 + h); } ctx.moveTo(x0, y0 + h / 2); ctx.lineTo(x0 + w, y0 + h / 2); ctx.stroke(); };
+  switch (md) {
+    case 'dead': line(1.8, dark); for (const ex of [2, 9]) { ctx.moveTo(ex - 2.5, -22.5); ctx.lineTo(ex + 2.5, -17.5); ctx.moveTo(ex + 2.5, -22.5); ctx.lineTo(ex - 2.5, -17.5); } ctx.stroke(); line(); ctx.arc(6, -11.5, 2, 0, PI * 2); ctx.stroke(); break;
+    case 'sleep': shut(); bags(); line(); ctx.arc(6, -11.8, 1.4, 0, PI * 2); ctx.stroke(); break;
+    case 'calm': if (blink) shut(); else eyes(); bags(); line(); ctx.moveTo(4, -12.6); ctx.quadraticCurveTo(6, -11.4, 8, -12.6); ctx.stroke(); break;
+    case 'happy': if (blink) shut(); else eyes(1.9, 1, 0.2); bags(0.4); blush(0.45); openMouth(3); break;
+    case 'joy': arcs(); blush(0.7); openMouth(3.8, -14); break;
+    case 'worried': if (blink) shut(); else eyes(1.5, 0.6, 1); bags(0.9, 1.6); brows(-24.5, -27, -27, -24.5); line(); ctx.moveTo(3.2, -11.2); ctx.quadraticCurveTo(4.6, -12.8, 6, -11.8); ctx.quadraticCurveTo(7.4, -10.8, 8.8, -12.2); ctx.stroke(); break;
+    case 'scared': eyes(1.1, 0.5, 0, 3.6, 4.3); brows(-25, -27.5, -27.5, -25); line(); ctx.ellipse(6, -11.4, 2, 2.6, 0, 0, PI * 2); ctx.stroke(); break;
+    case 'angry': eyes(1.6, 0.8, 0.8); brows(-27, -23.8, -23.8, -27); teeth(3, -14, 6, 3.2); break;
+    case 'tired': eyes(1.5, 0.8, 1.2); lids(0.55); bags(1, 2); line(); ctx.moveTo(4.2, -12); ctx.lineTo(7.8, -12); ctx.stroke(); break;
+    case 'fake': { const tw = Math.sin(FC * 0.9) > 0.6 ? 0.8 : 0; arcs(tw); bags(0.9, 1.6); brows(-26, -26.8, -26.8 - tw, -26 - tw); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(1.5, -14.5); ctx.lineTo(10.5, -14.5); ctx.lineTo(9, -11.8); ctx.lineTo(3, -11.8); ctx.closePath(); ctx.fill(); line(1.3); ctx.moveTo(1.5, -14.5); ctx.lineTo(10.5, -14.5); ctx.lineTo(9, -11.8); ctx.lineTo(3, -11.8); ctx.closePath(); ctx.moveTo(4.5, -14.5); ctx.lineTo(4.5, -11.8); ctx.moveTo(7.5, -14.5); ctx.lineTo(7.5, -11.8); ctx.stroke(); blush(0.3); break; }
+    case 'smug': eyes(1.6, 1.4, 1.4); lids(0.45); brows(-25.5, -26.2, -27.6, -28.4); line(); ctx.moveTo(4, -12.2); ctx.quadraticCurveTo(7.2, -11.2, 9.6, -14); ctx.stroke(); break;
+    case 'panic': eyes(1, Math.sin(FC * 0.5) * 1.2, 0, 3.6, 4.3); brows(-25, -27.5, -27.5, -25); line(); ctx.moveTo(3, -11.5); for (let i = 1; i <= 6; i++) ctx.lineTo(3 + i, -11.5 + (i % 2 ? -1 : 0)); ctx.stroke(); break;
+    case 'proud': arcs(); brows(-26.5, -27.5, -27.5, -26.5); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(2.5, -14); ctx.lineTo(9.5, -14); ctx.arc(6, -14, 3.5, 0, PI); ctx.closePath(); ctx.fill(); line(1.3); ctx.moveTo(2.5, -14); ctx.lineTo(9.5, -14); ctx.arc(6, -14, 3.5, 0, PI); ctx.closePath(); ctx.moveTo(2.8, -12.6); ctx.lineTo(9.2, -12.6); ctx.stroke(); break;
+    default: eyes(); bags(); line(); ctx.moveTo(4, -12.6); ctx.quadraticCurveTo(6, -11.4, 8, -12.6); ctx.stroke();
+  }
+  if (low && md !== 'tired' && md !== 'dead' && md !== 'sleep') bags(1, 2);
+}
+function heroFeel(k, t) { if (!G.feel || G.feel.k !== k || G.feel.t < t) G.feel = { k, t }; }
+function heroMood(dead) {
+  if (dead) return 'dead';
+  if (P.asleep) return 'sleep';
+  if (P.inv > 60) return 'scared';
+  const pt = G.patrol;
+  if (pt && pt.phase === 'caught') return 'scared';
+  if (pt && pt.phase === 'watch') return looksBusy() ? (P.typing ? 'fake' : 'worried') : 'scared';
+  if (G.meet) return 'tired';
+  if (G.feel && ['smug', 'angry', 'proud', 'joy', 'scared'].includes(G.feel.k)) return G.feel.k;
+  if (pt && (pt.phase === 'warn' || pt.phase === 'return')) return 'worried';
+  if (G.state === 'clear' || G.state === 'win' || P.star > 0 || G.fx.hyper > 0) return 'joy';
+  if (G.feel) return G.feel.k;
+  if (G.rage >= 80) return 'angry';
+  if (G.arena && boss && boss.state !== 'dead') return 'worried';
+  if (P.sanity < 30) return 'tired';
+  if (LV && LV.deadline && !LV.secret && G.clock >= LV.deadline - 30 && G.clock < LV.deadline) return 'panic';
+  return 'calm';
+}
+function drawMoodFx(md, cx, top) {                                  // 頭上的小符號
+  const b = Math.sin(FC * 0.12) * 2;
+  if (md === 'happy') txt('♪', cx + 12, top - 2 + b, 12, '#f06292', 'center', { stroke: '#fff', sw: 3 });
+  else if (md === 'joy') txt('✨', cx + 13, top + b, 12, '#000', 'center');
+  else if (md === 'angry') txt('💢', cx + 12, top + 2, 12 + Math.abs(b), '#000', 'center');
+  else if (md === 'panic') txt('‼', cx + 12, top + b, 14, '#ff1744', 'center', { stroke: '#fff', sw: 3 });
+  else if (md === 'tired' && FC % 200 < 70) txt('唉～', cx + 16, top - (FC % 200) * 0.15, 10, '#90a4ae', 'center', { stroke: '#fff', sw: 3 });
+  else if (md === 'smug') txt('✧', cx + 12, top + b, 13, '#ffd54f', 'center', { stroke: '#5d4037', sw: 3 });
+  else if (md === 'fake') txt('（表情管理中）', cx, top - 16 + Math.sin(FC * 0.5) * 0.8, 10, '#fff', 'center', { stroke: '#6a1b9a', sw: 3 });
+  else if (md === 'worried' && FC % 160 < 50) txt('💦', cx - 13, top + 4, 11, '#000', 'center');
+}
 function drawHero(x, by, s, face, phase, air, o = {}) {
   ctx.save(); ctx.translate(x, by); ctx.scale(s * face, s);
   ctx.lineCap = 'round';
@@ -3315,33 +3405,14 @@ function drawHero(x, by, s, face, phase, air, o = {}) {
     ctx.fillStyle = '#fff'; ctx.fillRect(-12, -16, 6, 8); ctx.fillStyle = '#1e88e5'; ctx.fillRect(-12, -16, 6, 2);
   }
   ctx.fillStyle = 'rgba(255,255,255,.55)'; ell(-6, -25, 3.5, 2.2, -0.5); ctx.fill();
-  // 眼睛（附黑眼圈）
-  if (o.dead) {
-    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.8; ctx.beginPath();
-    for (const ex of [2, 9]) { ctx.moveTo(ex - 2.5, -22.5); ctx.lineTo(ex + 2.5, -17.5); ctx.moveTo(ex + 2.5, -22.5); ctx.lineTo(ex - 2.5, -17.5); }
-    ctx.stroke();
-  } else if (o.sleep || (!o.hurt && (FC + Math.floor(x)) % 190 < 5)) {   // 眨眼／睡著
-    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.6; ctx.beginPath();
-    ctx.moveTo(-0.5, -19.5); ctx.lineTo(4.5, -19.5); ctx.moveTo(6.5, -19.5); ctx.lineTo(11.5, -19.5); ctx.stroke();
-    ctx.strokeStyle = 'rgba(58,26,85,.75)'; ctx.lineWidth = 1.4;
-    ctx.beginPath(); ctx.arc(2, -19, 4.2, 0.25 * Math.PI, 0.75 * Math.PI); ctx.stroke();
-    ctx.beginPath(); ctx.arc(9, -19, 4.2, 0.25 * Math.PI, 0.75 * Math.PI); ctx.stroke();
-  } else {
-    ctx.fillStyle = '#fff'; ell(2, -20, 3.2, 3.8); ctx.fill(); ell(9, -20, 3.2, 3.8); ctx.fill();
-    ctx.fillStyle = '#1a1a1a'; circ(3, -19.5, 1.7); ctx.fill(); circ(10, -19.5, 1.7); ctx.fill();
-    ctx.strokeStyle = o.low ? '#2a0f40' : 'rgba(58,26,85,.75)'; ctx.lineWidth = o.low ? 2 : 1.4;
-    ctx.beginPath(); ctx.arc(2, -19, 4.2, 0.25 * Math.PI, 0.75 * Math.PI); ctx.stroke();
-    ctx.beginPath(); ctx.arc(9, -19, 4.2, 0.25 * Math.PI, 0.75 * Math.PI); ctx.stroke();
-  }
-  ctx.strokeStyle = '#2b1d3a'; ctx.lineWidth = 1.5; ctx.beginPath();
-  if (o.hurt || o.dead) { ctx.arc(6, -11.5, 2, 0, Math.PI * 2); }
-  else if (o.happy) { ctx.arc(6, -13.5, 3, 0.15 * Math.PI, 0.85 * Math.PI); }
-  else { ctx.moveTo(3, -11.5); ctx.quadraticCurveTo(6, -13.5, 9, -11.5); }
-  ctx.stroke();
+  // 表情（mood）：calm 平靜、happy 開心、joy 超開心、worried 愁眉苦臉、scared 嚇到、angry 生氣、tired 累、fake 營業用笑容、smug 得意、panic 慌張、proud 自豪
+  const md = o.mood || (o.dead ? 'dead' : o.hurt ? 'scared' : o.sleep ? 'sleep' : o.happy ? 'happy' : o.low ? 'tired' : 'calm');
+  heroFace(md, x, o.low || md === 'tired');
   // 蒂頭 + 葉子
   ctx.strokeStyle = '#6d4c41'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(0, -31); ctx.lineTo(1, -37); ctx.stroke();
   ctx.fillStyle = '#43a047'; ell(6, -36, 6, 3, -0.4); ctx.fill();
-  if (o.low) { ctx.fillStyle = '#64b5f6'; ctx.beginPath(); ctx.moveTo(-13, -30); ctx.quadraticCurveTo(-9, -24, -13, -22); ctx.quadraticCurveTo(-17, -24, -13, -30); ctx.fill(); }
+  if (o.low || md === 'tired' || md === 'worried' || md === 'fake' || md === 'panic') { const dy = md === 'panic' ? Math.sin(FC * 0.3) * 1.5 : 0; ctx.fillStyle = '#64b5f6'; ctx.beginPath(); ctx.moveTo(-13, -30 + dy); ctx.quadraticCurveTo(-9, -24 + dy, -13, -22 + dy); ctx.quadraticCurveTo(-17, -24 + dy, -13, -30 + dy); ctx.fill();
+    if (md === 'panic' || md === 'fake') { ctx.beginPath(); ctx.moveTo(14, -29); ctx.quadraticCurveTo(17, -25, 14, -23); ctx.quadraticCurveTo(11, -25, 14, -29); ctx.fill(); } }
   const sk = o.skin !== undefined ? o.skin : (o.dry ? null : META.skin);
   if (sk && sk !== 'none') drawHat(sk);
   ctx.restore();
@@ -3422,9 +3493,11 @@ function drawPlayer() {
   else if (!P.onGround && P.vy < -4) { sxk = 0.9; syk = 1.1; }
   else if (P.onGround && Math.abs(P.vx) < 0.2) syk = 1 + Math.sin(FC * 0.07) * 0.018;
   ctx.save(); ctx.translate(cx, P.y + P.h); ctx.scale(sxk, syk); ctx.translate(-cx, -(P.y + P.h));
+  const mood = heroMood(dead);
   drawHero(cx + jit, P.y + P.h, 1, P.face, P.anim, !P.onGround && !dead,
-    { dead, hurt: P.inv > 60, low: P.sanity < 30, sleep: P.asleep && !dead, happy: G.state === 'clear' || G.state === 'win' || P.star > 0 || G.fx.hyper > 0 });
+    { dead, low: P.sanity < 30, mood });
   ctx.restore();
+  if (!dead && G.state === 'play') { drawMoodFx(mood, cx, P.y - (P.typing ? 16 : 6)); drawThought(); }
   if (G.amnesiaT > 0 && !dead) for (let i = 0; i < 3; i++) { const a = FC * 0.08 + i * 2.1; txt('?', cx + Math.cos(a) * 16, P.y - 14 + Math.sin(a * 1.3) * 6 - i * 4, 14 + i * 2, '#ffd54f', 'center', { stroke: '#4a148c', sw: 3 }); }
   if (P.asleep && !dead) { ctx.fillStyle = 'rgba(129,212,250,.8)'; ell(cx + P.face * 9, P.y + P.h - 14, 1.6, 2.4 + Math.sin(FC * 0.1)); ctx.fill(); }
   if (G.revWarn > 0 && !dead) txt('⇄ ' + Math.ceil(G.revWarn / 17) + '…', cx, P.y - 22, 16, '#ffeb3b', 'center', { stroke: '#b71c1c', sw: 4 });
@@ -3858,6 +3931,7 @@ function drawItems() {
       txt('✍', cx + 10, cy - 8, 12, '#ad1457', 'center');
       continue;
     }
+    if (it.chute && !it.onGround) { const cx = it.x + it.w / 2, cy = it.y - 22, sw = Math.sin(FC * 0.08 + it.x) * 0.15; ctx.save(); ctx.translate(cx, it.y); ctx.rotate(sw); ctx.translate(-cx, -it.y); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx - 15, cy); ctx.lineTo(cx - 4, it.y + 2); ctx.moveTo(cx + 15, cy); ctx.lineTo(cx + 4, it.y + 2); ctx.stroke(); ctx.fillStyle = '#ef5350'; ctx.beginPath(); ctx.arc(cx, cy, 17, Math.PI, 0); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, 17, Math.PI * 1.36, Math.PI * 1.64); ctx.fill(); ctx.restore(); }
     if (it.type === 'grape') drawGrape(it.x + it.w / 2, it.y + it.h / 2 + (it.grav ? 0 : Math.sin(FC * 0.08 + it.t) * 2));
     else if (it.type === 'letter') {
       const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
@@ -4250,7 +4324,7 @@ function drawDurian(x, y, s, mood) {
   ctx.fillStyle = g; ell(0, 0, 70, 76); ctx.fill();
   ctx.strokeStyle = 'rgba(90,85,20,.5)'; ctx.lineWidth = 2;
   for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * 22, -70); ctx.quadraticCurveTo(i * 30, 0, i * 22, 72); ctx.stroke(); }
-  const look = mood === 'angry' ? 0 : Math.sin(FC * 0.045) * 7;
+  const look = mood === 'angry' ? 0 : mood === 'shy' ? 9 + Math.sin(FC * 0.2) * 1.5 : Math.sin(FC * 0.045) * 7;
   for (const ex of [-24, 18]) {                             // 眼睛 + 眼鏡
     ctx.fillStyle = '#fff'; ell(ex, -12, 15, 13); ctx.fill();
     ctx.fillStyle = mood === 'angry' ? '#d50000' : '#1a1a1a'; circ(ex - 4 + look, -10, 6); ctx.fill();
@@ -4259,13 +4333,15 @@ function drawDurian(x, y, s, mood) {
   ctx.beginPath(); ctx.moveTo(-7, -12); ctx.lineTo(1, -12); ctx.stroke();
   ctx.lineWidth = 4; ctx.beginPath();                       // 眉毛
   if (mood === 'angry') { ctx.moveTo(-40, -38); ctx.lineTo(-12, -28); ctx.moveTo(34, -38); ctx.lineTo(6, -28); }
+  else if (mood === 'shy') { ctx.moveTo(-40, -30); ctx.lineTo(-12, -40); ctx.moveTo(34, -30); ctx.lineTo(6, -40); }
   else { ctx.moveTo(-38, -34); ctx.lineTo(-12, -36); ctx.moveTo(32, -34); ctx.lineTo(6, -36); }
   ctx.stroke();
   ctx.fillStyle = '#3e2723'; ctx.beginPath(); ctx.moveTo(-26, 16); ctx.quadraticCurveTo(-4, 6, -3, 18); ctx.quadraticCurveTo(-4, 26, -26, 16); ctx.fill();
   ctx.beginPath(); ctx.moveTo(20, 16); ctx.quadraticCurveTo(-2, 6, -3, 18); ctx.quadraticCurveTo(-2, 26, 20, 16); ctx.fill();
   ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 3; ctx.beginPath();
-  if (mood === 'angry') { ctx.moveTo(-14, 40); ctx.quadraticCurveTo(-3, 30, 8, 40); } else { ctx.moveTo(-14, 34); ctx.quadraticCurveTo(-3, 40, 8, 34); }
+  if (mood === 'angry') { ctx.moveTo(-14, 40); ctx.quadraticCurveTo(-3, 30, 8, 40); } else if (mood === 'shy') { ctx.moveTo(-14, 36); ctx.quadraticCurveTo(-8, 31, -3, 36); ctx.quadraticCurveTo(2, 41, 8, 36); } else { ctx.moveTo(-14, 34); ctx.quadraticCurveTo(-3, 40, 8, 34); }
   ctx.stroke();
+  if (mood === 'shy') { ctx.fillStyle = 'rgba(255,82,140,.5)'; ell(-46, 14, 11, 6); ctx.fill(); ell(40, 14, 11, 6); ctx.fill(); ctx.fillStyle = '#64b5f6'; ctx.beginPath(); ctx.moveTo(58, -52); ctx.quadraticCurveTo(66, -38, 58, -32); ctx.quadraticCurveTo(50, -38, 58, -52); ctx.fill(); }
   ctx.fillStyle = '#ffc107'; rr(-22, 52, 40, 16, 4); ctx.fill(); txt('老闆', -2, 64, 11, '#5d4037', 'center');
   ctx.restore();
 }
@@ -4740,7 +4816,7 @@ function drawTitleMenu() {
 
 function render() {
   if (isTouch && btnFlip) btnFlip.classList.toggle('ready', G.state === 'play' && G.rage >= 100);
-  if (isTouch && G.menuCls !== G.state) { G.menuCls = G.state; document.body.classList.toggle('menu', ['title', 'calendar', 'cards', 'skins', 'ach', 'shop', 'dayclear', 'review', 'credits', 'bubble', 'mengpo', 'parade', 'golf', 'elevator', 'hub', 'stare', 'phish', 'secdex'].includes(G.state)); }
+  if (isTouch && G.menuCls !== G.state) { G.menuCls = G.state; document.body.classList.toggle('menu', ['title', 'calendar', 'cards', 'skins', 'ach', 'shop', 'dayclear', 'review', 'credits', 'bubble', 'mengpo', 'parade', 'golf', 'elevator', 'hub', 'stare', 'phish', 'secdex', 'handbook'].includes(G.state)); }
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, W, H);
   G.ui = [];
@@ -4758,6 +4834,7 @@ function render() {
   if (G.state === 'elevator') { drawElevator(); drawAchBanner(); return; }
   if (G.state === 'stare') { drawStare(); drawAchBanner(); return; }
   if (G.state === 'secdex') { drawSecDex(); drawAchBanner(); return; }
+  if (G.state === 'handbook') { drawHandbook(); drawAchBanner(); return; }
   if (G.state === 'phish') { drawPhish(); drawAchBanner(); return; }
   if (G.state === 'credits') { drawCredits(); drawAchBanner(); return; }
   if (G.state === 'ach') { drawAchPage(); drawAchBanner(); return; }
@@ -4771,7 +4848,7 @@ function render() {
   ctx.save();
   if (G.fx && G.fx.drunk > 0 && G.state === 'play') { ctx.translate(W / 2, H / 2); ctx.rotate(Math.sin(FC * 0.035) * 0.03 * Math.min(1, G.fx.drunk / 60)); ctx.translate(-W / 2, -H / 2); }
   ctx.translate(-Math.round(cam.x) + sx, sy);
-  drawTiles(); drawLvSpikes(); drawObjs(); drawProps(); drawItems();
+  drawTiles(); drawLvSpikes(); drawObjs(); drawProps(); drawHbNotes(); drawItems();
   for (const e of enemies) if (e.x > cam.x - 80 && e.x < cam.x + W + 80) { drawEnemy(e); if (G.friday && e.alive && e.type !== 'cowork') { const ic = ['💤', '🍹', '🏖️'][Math.floor(e.x / 97) % 3]; ctx.globalAlpha = 0.85; txt(ic, e.x + e.w / 2 + Math.sin(FC * 0.05 + e.x) * 4, e.y - 10 - (FC * 0.3 + e.x) % 14, 14, '#000', 'center'); ctx.globalAlpha = 1; } }
   if (boss) { drawBoss(boss); if (boss.broStunT > 0 && boss.state !== 'dead') for (let i = 0; i < 4; i++) { const a = FC * 0.1 + i * 1.57; txt('★', boss.x + boss.w / 2 + Math.cos(a) * 30, boss.y - 6 + Math.sin(a) * 7, 16, '#ffd54f', 'center', { stroke: '#5d4037', sw: 3 }); } }
   drawPlayer(); drawMeet(); drawProjs(); drawParts();
@@ -4787,6 +4864,7 @@ function render() {
   drawInk();
   drawPatrol();
   drawHUD();
+  drawHbTip();
   drawFlipFx();
   drawBro();
   drawCine();
@@ -5135,6 +5213,7 @@ const CARDS = [
   ['grape', '🍇', '阿葡（你）', '資深社畜', '準時下班（偶爾）', '「我只想下班」'],
 ];
 function getCard(id) {
+  if (typeof ODD !== 'undefined' && ODD[id]) hbGet('odd');
   if (META.cards.includes(id)) return;
   const c = CARDS.find(x => x[0] === id); if (!c) return;
   META.cards.push(id); saveMeta();
@@ -5226,6 +5305,7 @@ function broTarget() {
   return { kind: 'bag', name: '「加班」沙包' };
 }
 function summonBro() {
+  hbGet('union');
   G.bro = { t: 0, phase: 'in', pt: 0, hits: 0, last: 0, punchT: 0, line: pick(BRO_LINES), ko: 0, tgt: broTarget(), knock: 0, side: 1, fx: [] };
   G.stats.bros = (G.stats.bros || 0) + 1; G.mash = false;
   keys.left = keys.right = false; P.vx = 0; SFX.broIn(); getCard('bro');
@@ -7403,6 +7483,15 @@ const ELV_Q = {
   ghost:  { line: '（門打開了……外面沒有人。門又關上。）', ch: [['……是鬼嗎？', 10, '老闆：「別亂講。這棟樓……算了。」'], ['哈哈哈', 8, '（只有你在笑）'], ['應該是按錯了', -4, '老闆：「嗯。」']], sil: [-2, '（三秒後，冷氣的聲音特別大）'] },
   weekend:{ line: '老闆：「週末有什麼計畫嗎？」', ch: [['加班！', -12, '老闆：「很好，很好。」'], ['去打高爾夫', 6, '老闆：「喔？下次一起打。」（你的週末沒了）'], ['在家躺平', 14, '老闆：「躺……平？」']], sil: [12, '老闆：「……你不想說也沒關係。」'] },
   stuck:  { line: '（電梯停了。燈閃了兩下。）', ch: [['按緊急按鈕', -4, '喇叭：「請稍候，維修人員 30 秒到。」'], ['我們會死嗎', 18, '老闆：「……」'], ['這是團隊建立的好機會！', -10, '老闆：「說得好！」']], sil: [8, '（黑暗中，兩個人的呼吸聲）'], fx: 'dark' },
+  // ---- 老闆自己出糗的尷尬時刻（shy：老闆臉紅冒汗） ----
+  zipper: { awk: 1, shy: 1, line: '（你發現……老闆的褲子拉鍊沒拉。）', ch: [['（小聲）老闆，拉鍊……', -8, '老闆：「……謝謝。」（默默轉身拉上）'], ['大聲：「老闆！拉鍊開了！」', 32, '（電梯裡所有人都低頭看了一眼）', 'angry'], ['（用手機打字給老闆看）', -4, '老闆：（看完手機，假裝在看樓層）']], sil: [10, '（你決定讓它成為老闆自己的課題）'] },
+  growl:  { awk: 1, shy: 1, fx: 'growl', line: '（咕嚕嚕嚕嚕——老闆的肚子叫得超大聲）', ch: [['（假裝是自己的肚子）不好意思！', -14, '老闆：（偷偷鬆了一口氣）'], ['老闆沒吃早餐嗎？', 12, '老闆：「……我在減肥。」'], ['我也餓了！一起吃午餐？', -6, '老闆：「……好，你請。」']], sil: [8, '（咕嚕聲在電梯裡迴盪了整整三秒）'] },
+  ring:   { awk: 1, shy: 1, fx: 'ring', line: '（老闆的手機響了，鈴聲是〈小蜜蜂〉兒歌……）', ch: [['好可愛的鈴聲！', 10, '老闆：「……我女兒設的。」'], ['（跟著哼：嗡嗡嗡～）', 22, '老闆：「……不要哼。」', 'angry'], ['（假裝沒聽到）', -6, '（老闆迅速按掉，假裝什麼都沒發生）']], sil: [-6, '（老闆迅速按掉，你們一起盯著樓層數字）'] },
+  wrongname: { awk: 1, line: '老闆：「小陳啊，最近辛苦了。」（你不是小陳）', ch: [['謝謝老闆！（將錯就錯）', 4, '老闆：「小陳，那下週的報告就交給你了。」'], ['老闆，我是阿葡……', 10, '老闆：「……對！阿葡！我剛剛就是說阿葡。」', 'shy'], ['小陳上個月離職了', 24, '老闆：「……」（電梯溫度下降了兩度）', 'shy']], sil: [8, '老闆：「小陳？……小陳你怎麼不說話？」'] },
+  fist:   { awk: 1, shy: 1, line: '（老闆伸出拳頭想跟你碰拳，你卻伸出手要握手……）', ch: [['改成碰拳', -4, '（兩隻手在空中卡了半秒才碰到）'], ['堅持握手', 14, '（老闆的拳頭被你整個包住了）'], ['改成擊掌！', -10, '「啪！」老闆：「……好！很有精神！」']], sil: [16, '（兩隻手懸在半空中，誰都沒有收回）'] },
+  speaker:{ awk: 1, shy: 1, fx: 'ding', line: '（老闆手機擴音：「老公～你便當忘記帶了啦～💕」）', ch: [['老闆娘好貼心！', -6, '老闆：「……嗯。」（臉紅到耳根）'], ['（小聲模仿）老公～💕', 40, '老闆：「……你剛剛說什麼？」', 'angry'], ['（專心盯著樓層數字）', -4, '（老闆手忙腳亂地關掉擴音）']], sil: [-4, '（老闆手忙腳亂地關掉擴音）'] },
+  wig:    { awk: 1, shy: 1, line: '（冷氣一吹，老闆頭頂的「頭髮」整片微微掀起來……）', ch: [['（默默站到出風口前擋風）', -12, '老闆：（感激地看了你一眼）'], ['老闆，你的頭髮……', 26, '老闆：「這是帽子。」', 'angry'], ['今天冷氣好強喔', 4, '老闆：（用手按住頭頂）「……對。」']], sil: [6, '（頭髮落回原位。你們都假裝沒發生）'] },
+  floor:  { awk: 1, line: '（老闆按錯樓層，門打開——是地下停車場。）', ch: [['老闆要去開車嗎？', 8, '老闆：「……對，我去看一下車。」（沒有走出去）', 'shy'], ['（默默按回 17 樓）', -8, '老闆：「嗯，你很機靈。」'], ['我也常按錯！', 4, '老闆：「我沒有按錯。」', 'shy']], sil: [6, '（門關上了。你們從 B2 重新出發）'], fx: 'ding' },
   diet:   { line: '老闆：「我最近在減肥。」', ch: [['看得出來！', -8, '老闆：「真的嗎！」（很開心）'], ['為什麼？', 12, '老闆：「……你覺得呢？」', 'angry'], ['我也是！', 2, '老闆：「你看起來不用。」']], sil: [9, '（老闆默默收起肚子）'] },
   pm:     { enter: 'pm', line: 'PM 鸚鵡走進來：「剛好！那個需求可以小改一下嗎？」', ch: [['好啊', -5, '（你的週末沒了）'], ['要排優先順序喔', 9, 'PM：「老闆你看，他在推託。」'], ['這要開會討論', 4, 'PM：「好！現在開！」']], sil: [-10, '（你假裝收訊不好，PM 默默放棄）'] },
   hr:     { enter: 'hr', line: 'HR 章魚走進來：「大家都在耶！記得填滿意度問卷喔 😊」', ch: [['填過了！', 6, 'HR：「你沒有。」'], ['非常滿意！', -4, '（老闆點了點頭）'], ['問卷是匿名的嗎？', 20, 'HR：「……是呀 😊」（記下來了）']], sil: [-4, 'HR：「😊」（觸手默默記下你的名字）'] },
@@ -7419,8 +7508,9 @@ function openElevator() {
   const pool = ['dept', 'smell', 'hum', 'jolt', 'mirror', 'phone', 'ghost', 'weekend', 'stuck', 'diet'], deck = [];
   while (pool.length) deck.push(pool.splice(Math.floor(r() * pool.length), 1)[0]);
   const guests = ['pm', 'hr', 'pine', 'melon'].sort(() => r() - 0.5).slice(0, 2);
-  const order = ['hi', deck[0], guests[0], deck[1], deck[2], guests[1], deck[3], deck[4], deck[5]];
-  G.elv = { t: 0, phase: 'intro', emb: 18, order, qi: 0, q: null, qT: 0, gap: 120, people: ['boss'], bub: [], raised: 0, raiseNext: false, sil: 0, picks: 0, shake: 0, flash: 0, dark: 0, angry: 0, floor: 1, door: 1, doorT: 0, res: null, r, pops: [], stop: null };
+  const ap = Object.keys(ELV_Q).filter(k => ELV_Q[k].awk), awk = []; while (ap.length && awk.length < 2) awk.push(ap.splice(Math.floor(r() * ap.length), 1)[0]);
+  const order = ['hi', deck[0], guests[0], awk[0], deck[1], guests[1], awk[1], deck[2], deck[3]];
+  G.elv = { t: 0, phase: 'intro', emb: 18, order, qi: 0, q: null, qT: 0, gap: 120, people: ['boss'], bub: [], shy: 0, shyN: 0, raised: 0, raiseNext: false, sil: 0, picks: 0, shake: 0, flash: 0, dark: 0, angry: 0, floor: 1, door: 1, doorT: 0, res: null, r, pops: [], stop: null };
   G.state = 'elevator'; G.stateT = 0; playSong('lift');
 }
 function elvSay(e, who, s, t = 150) { e.bub = e.bub.filter(b => b.who !== who); e.bub.push({ who, s, t }); }
@@ -7432,6 +7522,10 @@ function elvAsk(e) {
   const ch = q.ch.slice().sort(() => e.r() - 0.5);
   e.q = Object.assign({}, q, { ch, T: q.enter ? 330 : 270 }); e.qT = 0;
   if (q.fx === 'dark') { e.dark = 1; tone(110, 0.3, 'square', 0.06, 60); }
+  if (q.shy) { e.shy = e.q.T + 90; e.shyN++; }
+  if (q.fx === 'growl') { tone(70, 0.7, 'sawtooth', 0.09, 45); tone(55, 0.5, 'sawtooth', 0.07, 40, 0.5); }
+  if (q.fx === 'ring') [67, 64, 64, 65, 62, 62, 60, 62, 64, 65, 67, 67, 67].forEach((m, i) => tone(mtof(m), 0.17, 'square', 0.06, 0, i * 0.21));
+  if (q.fx === 'ding') SFX.ding();
   if (!q.enter) elvSay(e, q.line.startsWith('老闆') ? 'boss' : 'narr', q.line, 300);
 }
 function elvPick(i) {
@@ -7445,13 +7539,15 @@ function elvPick(i) {
   if (d >= 15) { e.shake = 10; e.flash = 0.4; SFX.nope(); buzz(60); } else if (d < 0) SFX.coin(); else SFX.bump();
   if (flag === 'angry') e.angry = 160;
   if (flag === 'raise') e.raiseNext = true;
+  if (flag === 'shy') { e.shy = Math.max(e.shy, 180); if (!q.shy) e.shyN++; }
+  if (q.shy && flag !== 'angry') e.shy = Math.max(e.shy, 150);
   if (ELV_RAISE.some(r => r.line === q.line)) e.musicT = 100;      // 調薪話題結束：音樂慢慢回來
   if (q.enter) e.leaveT = 420;
   e.q = null; e.gap = 170 + Math.floor(e.r() * 30);   // 回應看完再出下一題
 }
 function updateElevator() {
   const e = G.elv; if (!e) return; e.t++;
-  if (e.shake > 0) e.shake *= 0.85; if (e.flash > 0) e.flash -= 0.04; if (e.angry > 0) e.angry--; if (e.dark > 0 && !e.q) e.dark = Math.max(0, e.dark - 0.02);
+  if (e.shake > 0) e.shake *= 0.85; if (e.flash > 0) e.flash -= 0.04; if (e.angry > 0) e.angry--; if (e.shy > 0) e.shy--; if (e.dark > 0 && !e.q) e.dark = Math.max(0, e.dark - 0.02);
   for (const b of e.bub) b.t--; e.bub = e.bub.filter(b => b.t > 0); for (const p of e.pops) p.t++; e.pops = e.pops.filter(p => p.t < 70);
   if (e.phase === 'intro') { e.door = Math.max(0, 1 - e.t / 60); if (e.t === 1) elvSay(e, 'narr', '叮——電梯門打開……老闆就站在裡面。', 160); if (e.t > 90) { e.phase = 'ride'; e.t = 0; e.gap = 30; } return; }
   if (e.phase !== 'ride') { if (e.phase === 'win') e.door = Math.min(1, e.door + 0.03); return; }
@@ -7485,7 +7581,8 @@ function elevatorKey(e) {
 }
 // ---- 畫面 ----
 function drawElvPerson(who, x, y, s, e) {
-  if (who === 'boss') { drawDurian(x, y - 70 * s, 0.62 * s, e.angry > 0 || (e.q && ELV_RAISE.some(r => r.line === e.q.line)) ? 'angry' : 'normal'); return; }
+  if (who === 'boss') { const mood = e.angry > 0 || (e.q && ELV_RAISE.some(r => r.line === e.q.line)) ? 'angry' : e.shy > 0 ? 'shy' : 'normal'; drawDurian(x, y - 70 * s, 0.62 * s, mood);
+    if (mood === 'shy' && FC % 90 < 60) txt('（尷尬）', x, y - 70 * s - 70 * s, 13, '#ad1457', 'center', { stroke: '#fff', sw: 4 }); return; }
   const W0 = ELV_WHO[who]; ctx.fillStyle = 'rgba(0,0,0,.2)'; ell(x, y + 2, 34 * s, 8 * s); ctx.fill();
   ctx.fillStyle = W0.col; rr(x - 26 * s, y - 70 * s, 52 * s, 70 * s, 22 * s); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.fillRect(x - 4 * s, y - 64 * s, 8 * s, 30 * s); ctx.fillStyle = '#263238'; ctx.beginPath(); ctx.moveTo(x - 4 * s, y - 60 * s); ctx.lineTo(x + 4 * s, y - 60 * s); ctx.lineTo(x, y - 36 * s); ctx.fill();
@@ -7516,7 +7613,7 @@ function drawElevator() {
   const others = e.people.filter(p => p !== 'boss');
   others.forEach((p, i) => drawElvPerson(p, W / 2 - 60 + i * 120, 386, 0.95, e));
   drawElvPerson('boss', 690, 400, 1.15, e);
-  { const sw = e.emb / 100; drawHero(270, 390, 2.6, 1, 0, false, { happy: e.emb < 40 });
+  { const sw = e.emb / 100; drawHero(270, 390, 2.6, 1, 0, false, { mood: e.phase === 'win' ? 'joy' : e.phase === 'lose' ? 'scared' : e.shy > 0 ? 'fake' : e.emb < 25 ? 'calm' : e.emb < 50 ? 'fake' : e.emb < 75 ? 'worried' : 'panic' });
     for (let i = 0; i < Math.floor(sw * 6); i++) { const a = (FC * 0.05 + i * 1.3) % 1; ctx.fillStyle = `rgba(129,212,250,${1 - a})`; ell(232 + (i * 37) % 80, 290 + a * 40, 4, 7); ctx.fill(); }
     if (e.q && e.q.T - e.qT < 60 && FC % 20 < 10) txt('💦', 300, 280, 22, '#000', 'center');
     if (e.phase === 'lose') { const k = Math.min(1, e.t / 80); ctx.globalAlpha = 0.7; txt('👻', 270, 300 - k * 200, 60, '#000', 'center'); ctx.globalAlpha = 1; } }
@@ -7551,7 +7648,7 @@ function drawElevator() {
     ctx.fillStyle = '#fffdf5'; rr(W / 2 - 280, 110, 560, 300, 18); ctx.fill(); ctx.strokeStyle = r.win ? '#2e7d32' : '#6a1b9a'; ctx.lineWidth = 5; ctx.stroke();
     txt(r.win ? '叮！17F 到了 🔔' : '電梯還沒到…', W / 2, 160, 26, r.win ? '#2e7d32' : '#6a1b9a', 'center');
     txt(r.grade[0], W / 2, 210, 30, '#e65100', 'center'); txtFit(r.grade[1], W / 2, 250, 500, 16, '#4e342e', 'center');
-    txt(`最後尷尬值：${Math.round(e.emb)}　沉默次數：${e.sil}`, W / 2, 284, 14, '#8d6e63', 'center', { weight: 'normal' });
+    txt(`最後尷尬值：${Math.round(e.emb)}　沉默次數：${e.sil}　目睹老闆出糗：${e.shyN} 次`, W / 2, 284, 14, '#8d6e63', 'center', { weight: 'normal' });
     txt(r.win ? (r.gain ? `🍇 葡萄 +${r.gain}（每天第一次過關）` : '（今天的葡萄已經領過了）') : '提示：有時候什麼都不說，反而最安全', W / 2, 314, 14, '#2e7d32', 'center');
     if (!G.capture) { drawBtn(W / 2 - 220, 340, 200, 44, '🔁 再搭一次', openElevator, '#2e7d32'); drawBtn(W / 2 + 20, 340, 200, 44, '◀ 回標題', () => { G.elv = null; goTitle(); }, '#455a64'); }
   }
@@ -7574,7 +7671,8 @@ function hubItems(kind) {
     ['🏅', '成就', '各種奇怪的里程碑', `${achGot.size} / ${ACH.length}`, () => openAch('title'), '#6a1b9a'],
     ['📇', '名片冊', '交換過名片的同事（和怪物）', `${META.cards.length} / ${CARDS.length}`, openCards, '#455a64'],
     ['👕', '造型', '用葡萄換新衣服', `${META.skins.length} / ${SKINS.length}`, openSkins, '#ad1457'],
-    ['🛡️', '防詐小百科', '釣魚信件學到的防詐招式', `${(META.sec || []).length} / ${SEC_CARDS.length}`, openSecDex, '#00695c']] };
+    ['🛡️', '防詐小百科', '釣魚信件學到的防詐招式', `${(META.sec || []).length} / ${SEC_CARDS.length}`, openSecDex, '#00695c'],
+    ['📘', '員工手冊', '遊戲裡的各種機關和祕訣', `${(META.hb || []).length} / ${HB.length}`, openHandbook, '#1565c0']] };
   const sv = readSave(), dn = i => LEVELS[i].name.split('｜')[1] || LEVELS[i].name, items = [];
   for (let i = 0; i <= MAIN_LAST; i++) { const ok = !!(sv && sv.slots[i]); items.push([ok ? (sv.last === i ? '▶' : '📁') : '🔒', `第 ${i + 1} 天`, dn(i), ok ? (sv.last === i ? '上次玩到這裡' : '從這天開始') : '還沒解鎖', ok ? () => loadRun(i) : () => SFX.nope(), ok ? '#5e35b1' : null]); }
   items.push(['🆕', '從頭開始', '從週一早晨重新上班', '存檔會保留', () => startGame(), '#6d4c41']);
@@ -7749,7 +7847,7 @@ function oddLeave(e, line, how = 'leave') {
   popup(e.x + e.w / 2, e.y - 34, '+250', '#ffd54f', 14); burst(e.x + e.w / 2, e.y, '#ffe082', 8, 2);
 }
 function oddStomp(e) {
-  P.vy = keys.jump ? -11 : -7.5; G.hitstop = 4; impact(e.x + e.w / 2, e.y + 6, false); SFX.stomp(1); P.combo++; G.stats.stomps++; broCount();
+  P.vy = keys.jump ? -11 : -7.5; G.hitstop = 4; impact(e.x + e.w / 2, e.y + 6, false); SFX.stomp(1); heroFeel('proud', 34); hbGet('stomp'); P.combo++; G.stats.stomps++; broCount();
   const L = { lemon: e.stolen ? '對不起…是你做的，是你做的！' : '我、我只是路過！', coconut: '好啦，這個會改成 email 好了', peach: '老闆救我！有人欺負我！',
     banana: '好啦好啦，冷氣不調了', chili: '咖哩我帶去外面吃…', pear: null }[e.kind];
   if (e.kind === 'pear') { e.dizzy = 90; oddSay(e, '踩我也沒用，系統在跑…（轉圈圈）', STORY_MIN); getCard('pear'); return; }
@@ -7789,7 +7887,7 @@ function updateOdd(e, asleep) {
   const push = s => { P.vx = s; P.vy = Math.min(P.vy, -3.5); };
   if (e.kind === 'lemon') {
     getCard('lemon');
-    if (G.grapes > 0 && e.st !== 'flee') { const n = Math.min(5, G.grapes); G.grapes -= n; e.stolen = (e.stolen || 0) + n; e.st = 'flee'; e.stT = 300; e.face = dx > 0 ? -1 : 1;
+    if (G.grapes > 0 && e.st !== 'flee') { const n = Math.min(5, G.grapes); G.grapes -= n; heroFeel('angry', 70); e.stolen = (e.stolen || 0) + n; e.st = 'flee'; e.stT = 300; e.face = dx > 0 ? -1 : 1;
       oddSay(e, '這個是我做的喔～', STORY_MIN); popup(P.x + P.w / 2, P.y - 20, `-${n} 🍇 功勞被搶走了！踩他拿回來！`, '#ffab91', 14); SFX.nope(); }
     else if (e.st !== 'flee') oddSay(e, '你今天什麼都沒做喔？', 160);
     e.cool = 120;
@@ -7929,6 +8027,159 @@ function drawMeet() {
   ctx.fillStyle = 'rgba(0,0,0,.45)'; rr(cx - 50, cy + r + 4, 100, 10, 5); ctx.fill(); ctx.fillStyle = '#69f0ae'; rr(cx - 50, cy + r + 4, 100 * Math.min(1, m.n / m.need), 10, 5); ctx.fill();
   txt(isTouch ? '連點「跳」逃出會議！' : '連打 空白鍵 逃出會議！', cx, cy + r + 30, 12, '#fff59d', 'center', { stroke: '#3e2723', sw: 3 });
   if (m.line) txt('🥥「' + m.line + '」', cx, cy - r - 58, 11, '#fff', 'center', { stroke: '#3e2723', sw: 3 });
+}
+
+// ---------- 📘 員工手冊：第一次小提示＋卡關善意提醒＋場景便利貼 ----------
+// [id, 圖示, 標題, 說明, 還沒發現時的模糊提示]
+const HB = [
+  ['stomp', '📧', '踩頭＝已讀', '跳起來踩怪物的頭就能處理掉它。連續踩不落地，分數會越來越高。', '跳起來……踩下去？'],
+  ['union', '💪', '工會大哥', '每踩扁一隻怪，左上角「工會」集氣一格；集滿了工會大哥會出場幫你揍人（狂按出拳）。', '左上角那排圓圈，是在集什麼？'],
+  ['qbox', '❓', '問號需求箱', '從下面頂問號箱：裡面有葡萄、咖啡，偶爾還有離職信。', '頭上那些「?」箱子，頂頂看？'],
+  ['hidden', '👻', '隱藏需求', '有些地方看起來空空的，其實藏著箱子，頂一下才會出現。告示牌說「抬頭看看」就是在暗示你。', '空中好像有什麼……看不見的東西？'],
+  ['patrol', '👞', '老闆巡視', '聽到「叩、叩、叩」腳步聲就是老闆要來了。按住 ↓ 假裝打字，或躲到盆栽後面。', '聽到腳步聲的時候，要怎麼辦？'],
+  ['plant', '🌿', '盆栽掩護', '站在盆栽後面，老闆就看不到你在摸魚。', '盆栽除了好看，還有別的用途嗎？'],
+  ['twist', '📱', '回馬槍', '老闆說「手機忘了拿」又折回來——別太早放鬆，他還會再看一次。', '老闆走了……真的走了嗎？'],
+  ['caught', '🚨', '被抓包', '被老闆抓到摸魚：精神 −18、被叫去聊 20 分鐘，考績也會扣分。', '（希望你永遠不會解鎖這頁）'],
+  ['rage', '😤', '怒氣值', '被怪打、被塞工作都會累積怒氣。怒氣滿了就可以翻桌（X／翻桌鍵）。', '左上角的怒氣滿了會怎樣？'],
+  ['flip', '🔥', '翻桌', '翻桌會把畫面上的怪物通通掃光！但老闆正在看的時候不能翻。', '怒氣滿了的時候，按 X 看看？'],
+  ['coffee', '☕', '咖啡補精神', '喝咖啡精神值 +35。精神值歸零就會縮成葡萄乾。', '精神值快沒了，要喝點什麼？'],
+  ['hyper', '⚡', '咖啡因過量', '10 秒內連喝 3 杯咖啡：心跳 180、速度爆表、怪一碰就飛。', '咖啡……一次喝很多杯會怎樣？'],
+  ['vending', '🥤', '自動販賣機', '跳上去踩一腳（或衝過去撞）會掉咖啡；踩壞了會一次吐出全部存貨。（請勿模仿）', '販賣機好像怪怪的，踩一下？'],
+  ['break', '💸', '破壞公物', '撞壞印表機、白板、椅子會造成公司財損，年終考績會扣分……但很紓壓。', '那台印表機……撞得壞嗎？'],
+  ['task', '🍍', '被塞工作', '被鳳梨同事碰到會被塞工作：精神 −8、腳步變慢、怒氣上升。', '那個鳳梨同事，一直往你這邊走……'],
+  ['refuse', '🙅', '學會說不', '踩鳳梨同事的頭＝拒絕他。學會說不可以加分，考績也會變好。', '被塞工作之前，先下手為強？'],
+  ['toilet', '🚽', '帶薪拉屎', '在廁所門口按 ↓：全世界暫停，薪水照領，精神值慢慢回復。', '廁所……可以進去嗎？'],
+  ['nap', '💤', '午休室', '在午休室門口按 ↓，進去戳泡泡紙紓壓。', '那扇紫色的門是什麼？'],
+  ['check', '💾', '茶水間存檔', '碰一下茶水間就存檔，之後陣亡會從這裡重來，還會補一點精神。', '茶水間除了泡茶，還能做什麼？'],
+  ['letter', '📄', '離職信', '藏在各關的離職信，撿到會無敵一陣子。集滿就能解鎖「真．下班」結局。', '有一種信，撿到會讓你自由……'],
+  ['door', '🚪', '牆上的門', '頂出某些隱藏箱，牆上會浮現一扇門，按 ↓ 進去有秘密房間。', '牆壁……會不會有門？'],
+  ['secret', '🛗', '週五電梯', '某一關的天花板上藏著一台電梯，可以通往「週五限定」的隱藏關。', '最高的地方，好像有台電梯？'],
+  ['deadline', '🔺', 'Deadline 刺', '紅色的 Deadline 刺碰到會很痛，有些地板還會突然變成刺。從桌子上面走比較安全。', '「⚠ 會變 Deadline」是什麼意思？'],
+  ['reverse', '⇄', '需求變更區', '看到 ⇄ 倒數，左右就要顛倒了。準備好反著按。', '⇄ 這個符號……要變更什麼？'],
+  ['ads', '📢', '彈出廣告', '廣告會擋住畫面，按 ↓ 或 Q 關掉。小心有些是假的關閉鈕。', '突然跳出來的視窗，要怎麼關？'],
+  ['bsod', '💻', '藍屏當機', '電腦藍屏了！狂按任意鍵重開機，越快越好。', '螢幕突然變藍色……'],
+  ['spot', '🔦', '尾牙聚光燈', '被聚光燈照太久會被叫上台表演。躲到桌子底下就照不到。', '尾牙會場的燈光，好像在找人？'],
+  ['boss', '👑', '頭目戰', '每個頭目打法都不一樣，記得看開場的提示。精神值低的時候，茶水間阿姨會空投咖啡。', '每一天的最後，好像有大人物在等你'],
+  ['shop', '🛒', '福利社', '每一關結束可以用葡萄買道具：人體工學椅減傷、降噪耳機……', '下班後可以買東西嗎？'],
+  ['odd', '🍋', '奇葩同事', '檸檬偷功勞、椰子拉你開會、水蜜桃打小報告、洋梨已讀不回、香蕉搶冷氣、辣椒熱咖哩……各有對付的方法。', '辦公室裡好像有幾個怪怪的同事'],
+  ['grape50', '🌴', '葡萄換年假', '每收集 50 顆葡萄，年假（命）+1 天。', '葡萄收集多了，會有好事嗎？'],
+  ['fortune', '🎋', '今日運勢', '每日打卡關卡開始前會抽運勢，大吉小吉會帶來不同的特殊效果。', '每天上班前，先抽個籤？'],
+];
+const HB_IDS = HB.map(h => h[0]);
+function hbHas(id) { return !!(META.hb && META.hb.includes(id)); }
+function hbGet(id) {                                              // 第一次發生：解鎖手冊頁＋跳一次提示（存檔，之後不再出現）
+  if (!HB_IDS.includes(id)) return false;
+  META.hb = META.hb || []; if (META.hb.includes(id)) return false;
+  META.hb.push(id); saveMeta(); G.hbQ = G.hbQ || []; G.hbQ.push(id);
+  if (META.hb.length >= HB.length) unlock('hbAll');
+  return true;
+}
+function hbStep() {                                               // 在遊戲中才顯示，一次一則
+  if (G.hbShow) { if (--G.hbShow.t <= 0) G.hbShow = null; return; }
+  if (G.state === 'play' && !G.paused && G.hbQ && G.hbQ.length && !G.bro && !G.stage && !G.bsod && G.toiletT <= 0) { G.hbShow = { id: G.hbQ.shift(), t: 330, max: 330 }; SFX.ding(); }
+}
+function drawHbTip() {
+  const s = G.hbShow; if (!s || G.state !== 'play') return; const h = HB.find(x => x[0] === s.id); if (!h) return;
+  const k = Math.min(1, (s.max - s.t) / 14, s.t / 14), x = 14 - (1 - k) * 360, y = 132, w = 336;
+  const lines = phWrap(h[3], w - 70, 13).slice(0, 3), hh = 58 + lines.length * 18;
+  ctx.globalAlpha = clamp(k, 0, 1);
+  ctx.fillStyle = 'rgba(255,253,240,.97)'; rr(x, y, w, hh, 12); ctx.fill(); ctx.strokeStyle = '#1565c0'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#1565c0'; rr(x, y, w, 24, 12); ctx.fill(); ctx.fillRect(x, y + 12, w, 12);
+  txt(`📘 員工手冊 新增一頁（${(META.hb || []).length}/${HB.length}）`, x + 12, y + 17, 12, '#fff');
+  txt(h[1], x + 28, y + 52, 24, '#000', 'center');
+  txtFit(h[2], x + 54, y + 44, w - 66, 15, '#0d47a1');
+  lines.forEach((ln, i) => txt(ln, x + 54, y + 64 + i * 18, 13, '#37474f', 'left', { weight: 'normal' }));
+  ctx.globalAlpha = 1;
+}
+// ---- 卡關善意提醒：阿葡頭上冒出想法泡泡 ----
+function hbThink(id, text) {
+  G.hintN = G.hintN || {}; if (G.thought || (G.hintCD || 0) > 0 || (G.hintN[id] || 0) >= 2) return false;
+  G.hintN[id] = (G.hintN[id] || 0) + 1; G.thought = { text, t: 330 }; G.hintCD = 1500; tone(1175, 0.1, 'sine', 0.05); return true;
+}
+function hbFail(key) { G.fails = G.fails || {}; G.fails[key] = (G.fails[key] || 0) + 1; return G.fails[key]; }
+function hbStuckStep() {
+  if (G.thought && --G.thought.t <= 0) G.thought = null; if (G.hintCD > 0) G.hintCD--;
+  if (G.state !== 'play' || G.paused || FC % 30) return;
+  const lk = LV ? LV.name : '';
+  // 頭目打不贏
+  if (G.arena && boss && boss.state !== 'dead' && boss.state !== 'intro' && (G.fails || {})['boss:' + boss.kind] >= 2) {
+    const I = BOSS_INTRO[boss.kind]; if (I) hbThink('boss:' + boss.kind, '💭 ' + I[1].replace(/^\S+\s/, '') ); }
+  // 一直被老闆抓
+  if (G.patrol && G.patrol.phase === 'warn' && (G.fails || {})['caught:' + lk] >= 2) hbThink('caught', '💭 腳步聲來了……按住 ↓ 假裝打字，或躲到盆栽後面');
+  // Deadline 刺
+  if ((G.fails || {})['spike:' + lk] >= 3) hbThink('spike', '💭 Deadline 刺好痛……也許桌子上面有別條路？');
+  // 精神快沒了
+  G.lowT = P.sanity < 30 ? (G.lowT || 0) + 30 : 0;
+  if (G.lowT >= 480) hbThink('low', '💭 精神快沒了……頂問號箱、踩販賣機都可能有咖啡');
+  // 怒氣滿了卻沒翻桌
+  G.rageT = G.rage >= 100 && G.flipT <= 0 ? (G.rageT || 0) + 30 : 0;
+  if (G.rageT >= 420) hbThink('rage', `💭 怒氣滿了……${isTouch ? '按翻桌鍵' : '按 X'} 翻桌，把怪物通通掃光！`);
+  // 卡住不前進
+  if (!G.arena && !G.patrol && !G.meet && !G.toiletT) {
+    if (P.x > (G.bestX || 0) + 40) { G.bestX = P.x; G.stuckT = 0; } else G.stuckT = (G.stuckT || 0) + 30;
+    if (G.stuckT >= 1500) { if (hbThink('stuck', pick(['💭 是不是卡住了？試試跳到桌子上，或頂一下頭上的箱子', '💭 往上看看？說不定有桌子可以走'])) ) G.stuckT = 0; }
+  }
+  // 洋梨的門
+  const pear = enemies.find(e => e.type === 'odd' && e.kind === 'pear' && e.alive && e.gate && e.gate.open <= 0);
+  if (pear) { const g = pear.gate, near = P.x + P.w < g.x + 4 && P.x + P.w > g.x - 90; G.pearT = near ? (G.pearT || 0) + 30 : 0; if (G.pearT >= 240) hbThink('pear', '💭 洋梨已讀不回……等 10 秒門會開，或者直接跳過去？'); }
+}
+function drawThought() {
+  const th = G.thought; if (!th || G.state !== 'play') return;
+  const cx = P.x + P.w / 2, y = P.y - 40 - (P.typing ? 12 : 0);
+  ctx.font = `bold 13px ${FONT}`; const w = Math.min(380, ctx.measureText(th.text).width + 26), bx = clamp(cx - w / 2, cam.x + 8, cam.x + W - w - 8);
+  ctx.globalAlpha = Math.min(1, th.t / 20, (330 - th.t) / 10);
+  ctx.fillStyle = 'rgba(255,255,255,.96)'; rr(bx, y - 22, w, 30, 15); ctx.fill(); ctx.strokeStyle = '#90a4ae'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.96)'; circ(cx + 2, y + 13, 5); ctx.fill(); ctx.stroke(); circ(cx - 2, y + 22, 3); ctx.fill(); ctx.stroke();
+  txtFit(th.text, bx + w / 2, y - 2, w - 18, 13, '#37474f', 'center');
+  ctx.globalAlpha = 1;
+}
+// ---- 場景便利貼：第一次會用到的機關旁邊貼一張（學會之後就撕掉） ----
+const HB_NOTES = {
+  plant:   ['plant', '老闆來了可以', '躲這裡 🌿'],
+  vending: ['vending', '踩一腳會掉咖啡', '（請勿模仿）'],
+  printer: ['break', '撞壞＝公司財損', '（但很紓壓）'],
+  toilet:  ['toilet', '帶薪拉屎：', '按 ↓ 進去'],
+  nap:     ['nap', '午休室：', '按 ↓ 戳泡泡紙'],
+  check:   ['check', '茶水間：', '碰一下就存檔'],
+};
+function drawNote(x, y, a, b, rot) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(-45, -17, 92, 36); ctx.fillStyle = '#fff59d'; ctx.fillRect(-46, -19, 92, 36);
+  ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fillRect(-12, -23, 24, 8);
+  txt(a, 0, -5, 10, '#5d4037', 'center'); txt(b, 0, 10, 10, '#5d4037', 'center');
+  ctx.restore();
+}
+function drawHbNotes() {
+  if (!LV || G.state === 'title') return;
+  const seen = {};
+  for (const o of objs) { const N = HB_NOTES[o.kind]; if (!N || o.broken || seen[o.kind] || hbHas(N[0])) continue; seen[o.kind] = 1; if (!onScreen(o, 80)) continue; drawNote(o.x + o.w / 2, o.y - 30, N[1], N[2], (o.x % 7 - 3) * 0.02); }
+  for (const p of props) { const N = HB_NOTES[p.type]; if (!N || p.used || seen[p.type] || hbHas(N[0])) continue; seen[p.type] = 1; if (p.x < cam.x - 80 || p.x > cam.x + W + 80) continue; drawNote(p.x + p.w / 2, p.y - 46, N[1], N[2], (p.x % 7 - 3) * 0.02); }
+}
+// ---- 收藏冊：員工手冊 ----
+function openHandbook() { G.state = 'handbook'; G.stateT = 0; G.hbPg = G.hbPg || 0; }
+function hbPage(d) { const n = Math.ceil(HB.length / 9); G.hbPg = ((G.hbPg || 0) + d + n) % n; SFX.coin(); }
+function handbookKey(e) {
+  if (['Escape', 'Backspace'].includes(e.code)) { openHub('collect'); return; }
+  if (['ArrowLeft', 'KeyA'].includes(e.code)) hbPage(-1); else if (['ArrowRight', 'KeyD'].includes(e.code)) hbPage(1);
+}
+function drawHandbook() {
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0d47a1'); g.addColorStop(1, '#0b1a33'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const got = META.hb || [], n = Math.ceil(HB.length / 9), pg = clamp(G.hbPg || 0, 0, n - 1);
+  txt(`📘 員工手冊　${got.length} / ${HB.length}`, W / 2, 38, 24, '#fff', 'center');
+  txt('在「阿葡的下班大冒險」裡第一次遇到的事情，都會記在這裡', W / 2, 60, 13, '#bbdefb', 'center', { weight: 'normal' });
+  const cw = 300, ch = 128, gx = 12, gy = 10, x0 = (W - 3 * cw - 2 * gx) / 2;
+  HB.slice(pg * 9, pg * 9 + 9).forEach((h, i) => {
+    const x = x0 + (i % 3) * (cw + gx), y = 74 + Math.floor(i / 3) * (ch + gy), have = got.includes(h[0]);
+    ctx.fillStyle = have ? '#fffdf6' : 'rgba(255,255,255,.07)'; rr(x, y, cw, ch, 10); ctx.fill();
+    if (have) { ctx.fillStyle = '#1565c0'; ctx.fillRect(x, y + 10, 5, ch - 20); }
+    txt(`P.${pg * 9 + i + 1}`, x + cw - 12, y + 20, 11, have ? '#90a4ae' : 'rgba(255,255,255,.3)', 'right', { weight: 'normal' });
+    txt(have ? h[1] : '❔', x + 30, y + 40, 26, '#000', 'center');
+    txtFit(have ? h[2] : '？？？', x + 52, y + 34, cw - 100, 16, have ? '#0d47a1' : 'rgba(255,255,255,.5)');
+    (have ? phWrap(h[3], cw - 30, 13).slice(0, 4) : phWrap('💡 ' + h[4], cw - 30, 13).slice(0, 3)).forEach((ln, j) => txt(ln, x + 16, y + 66 + j * 19, 13, have ? '#37474f' : 'rgba(255,255,255,.45)', 'left', { weight: 'normal' }));
+  });
+  for (let i = 0; i < n; i++) { ctx.fillStyle = i === pg ? '#90caf9' : 'rgba(255,255,255,.25)'; circ(W / 2 - (n - 1) * 9 + i * 18, 496, 5); ctx.fill(); }
+  drawBtn(x0, H - 46, 120, 36, '◀ 上一頁', () => hbPage(-1), '#1565c0'); drawBtn(x0 + 3 * cw + 2 * gx - 120, H - 46, 120, 36, '下一頁 ▶', () => hbPage(1), '#1565c0');
+  drawBtn(W / 2 - 80, H - 40, 160, 34, '◀ 收藏冊', () => openHub('collect'), '#455a64');
 }
 
 // ---------- 🕵️ 老闆轉頭就停（上班版一二三木頭人） ----------
@@ -8207,7 +8458,9 @@ function drawStare() {
   // 阿葡＋桌子＋螢幕
   const slack = s.hold && s.phase === 'play', caught = b.mode === 'caught', snz = s.sneeze && s.sneeze.t >= 90;
   ctx.save(); if (slack) { ctx.translate(hx, hy); ctx.rotate(0.08); ctx.translate(-hx, -hy); } if (snz) { ctx.translate(hx, hy); ctx.rotate(-0.05 * (s.sneeze.t - 90) / 50); ctx.translate(-hx, -hy); }
-  drawHero(hx, hy, 4, slack ? 1 : -1, 0, false, { happy: slack && !s.cheer, hurt: caught || !!s.ring, sleep: !!snz });
+  const hm = s.phase === 'win' ? 'joy' : s.phase === 'lose' ? 'tired' : caught ? 'scared' : snz ? 'sleep' : s.ring ? 'panic' : s.cheer ? 'joy' : slack ? (b.mode === 'phone' || b.mode === 'curry' || s.final ? 'joy' : 'happy') : s.meet > 0 ? 'tired' : b.rot >= 0.72 ? 'fake' : b.mode === 'warn' || b.mode === 'mirror' ? 'worried' : s.cw && s.cw.kind === 'lemon' && s.cw.started ? 'angry' : 'calm';
+  drawHero(hx, hy, 4, slack ? 1 : -1, 0, false, { mood: hm });
+  if (s.phase === 'play' && hm === 'fake') txt('（表情管理中）', hx, 292, 14, '#fff', 'center', { stroke: '#6a1b9a', sw: 4 });
   ctx.restore();
   if (slack || s.ring) {                                           // 手機
     const ring = !!s.ring, px = hx + 66 + (ring ? rand(-4, 4) : 0), py = 340 + Math.sin(FC * 0.1) * 2, a = ST_ACTS[s.act];
@@ -8643,6 +8896,7 @@ function drawLaborTip(key, y = 474) {
 // ---------- 每日關卡流程 ----------
 function startDaily(n) {
   if (!dayOpen(n)) return;
+  hbGet('fortune');
   initAudio();
   G.daily = n; G.fort = drawFortune(n);
   G.lives = 99; G.score = 0; G.grapes = 0; G.grapesAll = 0; G.grapesSpent = 0; G.deaths = 0; G.coffees = 0; G.rage = 0;
