@@ -1167,7 +1167,6 @@ function loadLevel(idx, useCP) {
   if (LV.secret) LV.sub = LV.mission = fridayLine();
   enemies = []; items = []; props = []; projs = []; parts = []; pops = []; bumps = []; objs = []; boss = null;
   LV.ents.forEach(spawnEnt);
-  if (useCP && boss && G.bossKeep && G.bossKeep.lv === LV.name && G.bossKeep.kind === boss.kind) boss.hp = clamp(G.bossKeep.hp, 1, boss.maxHp);
   G.meet = null; placeOddCoworkers(idx);                   // 奇葩同事
   const sx = (useCP && G.cp != null) ? G.cp : LV.spawn;
   P = newPlayer(sx);
@@ -1210,7 +1209,7 @@ function loadRun(i) {
   toast(`💾 讀取存檔：第 ${i + 1} 天早上`, 160);
 }
 function startLevel(i) {
-  writeSave(i); G.bossKeep = null;
+  writeSave(i);
   G.cp = null; G.clock = LEVELS[i].clock || 540; G.clockAcc = 0; G.levelScore0 = G.score; G.levelDamage = 0;
   G.warned = 0; G.stageDone = false; G.revN = 0;
   loadLevel(i, false);
@@ -1626,7 +1625,7 @@ function hurt(amount, cause, srcX, label) {
 function die(cause) {
   if (G.state !== 'play') return;
   if (G.items.spare) { useSpare(cause); return; }
-  if (G.arena && boss && boss.state !== 'dead') { hbFail('boss:' + boss.kind); G.bossKeep = { lv: LV.name, kind: boss.kind, hp: boss.hp }; }
+  if (G.arena && boss && boss.state !== 'dead') hbFail('boss:' + boss.kind);
   G.state = 'dead'; G.stateT = 0; if (!G.daily) G.lives--; G.deaths++; G.clock += 30;
   G.deathCause = cause; G.deathMsg = pick(TXT.death[cause] || TXT.death.sanity);
   G.deathStyle = cause === 'pit' ? 'pit' : cause === 'spike' ? 'juice' : 'raisin';
@@ -2179,9 +2178,7 @@ function checkArena() {
     G.arena = true;
     for (let y = 0; y <= 14; y++) setTile(A.wallX, y, 8);
     boss.active = true; bossState('intro', 170); hbGet('boss');
-    G.cp = A.trig; P.sanity = Math.max(P.sanity, 80);
-    const kept = G.bossKeep && G.bossKeep.lv === LV.name && G.bossKeep.kind === boss.kind && boss.hp < boss.maxHp;
-    G.rtMsg = kept ? `🩹 頭目上次被你打的傷還在（剩 ${boss.hp}/${boss.maxHp}）・💾 已在會議室門口存檔・☕ 精神補到 80%` : '💾 會議室門口自動存檔・☕ 茶水間阿姨塞給你一杯咖啡（精神補到 80%）'; G.rtT = FC + 290;
+    P.sanity = Math.max(P.sanity, 80); G.rtMsg = '☕ 開會前，茶水間阿姨塞給你一杯咖啡（精神補到 80%）'; G.rtT = FC + 290;
     if (!(P.star > 0)) playSong(boss.song);
     SFX.boss(); G.shake = 10;
     const I = BOSS_INTRO[boss.kind] || BOSS_INTRO.duck;
